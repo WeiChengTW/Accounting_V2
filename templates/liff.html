@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>記帳</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div id="loading" class="loading-screen">
+    <div class="loading-spinner"></div>
+    <p>載入中...</p>
+  </div>
+
+  <div id="app" style="display:none">
+    <nav class="tab-bar">
+      <button class="tab-btn active" data-tab="add"><span class="tab-icon">📝</span><span class="tab-label">新增</span></button>
+      <button class="tab-btn" data-tab="records"><span class="tab-icon">🔍</span><span class="tab-label">查詢</span></button>
+      <button class="tab-btn" data-tab="settlement"><span class="tab-icon">💰</span><span class="tab-label">算錢</span></button>
+      <button class="tab-btn" data-tab="members"><span class="tab-icon">👥</span><span class="tab-label">成員</span></button>
+    </nav>
+
+    <div class="tab-panels">
+
+      <!-- 新增記帳 -->
+      <div class="tab-panel active" id="tab-add">
+        <h2>新增記帳</h2>
+        <form id="add-form">
+          <div class="form-group">
+            <label>項目</label>
+            <input type="text" id="item" placeholder="例：早餐" required>
+          </div>
+          <div class="form-group">
+            <label>金額</label>
+            <input type="number" id="amount" placeholder="0" min="1" required>
+          </div>
+          <div class="form-group">
+            <label>收/支</label>
+            <div class="radio-group">
+              <label class="radio-label">
+                <input type="radio" name="record_type" value="支出" checked> 支出
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="record_type" value="收入"> 收入
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>日期</label>
+            <input type="date" id="date">
+          </div>
+          <button type="submit" class="btn-primary btn-block">記帳</button>
+        </form>
+        <div id="add-msg" class="msg-area"></div>
+      </div>
+
+      <!-- 查詢 -->
+      <div class="tab-panel" id="tab-records" style="display:none">
+        <div class="month-bar">
+          <input type="month" id="records-month">
+          <button class="btn-sm" onclick="loadRecords()">查詢</button>
+        </div>
+        <div id="summary-card" class="card"></div>
+        <div id="records-list"></div>
+      </div>
+
+      <!-- 算錢 -->
+      <div class="tab-panel" id="tab-settlement" style="display:none">
+        <div class="month-bar">
+          <input type="month" id="settlement-month">
+          <button class="btn-sm" onclick="loadSettlement()">計算</button>
+        </div>
+        <div id="settlement-result"></div>
+
+        <div class="section-divider"></div>
+        <h3>補款登記</h3>
+        <form id="payment-form">
+          <div class="form-group">
+            <label>補給誰</label>
+            <input type="text" id="payment-to" placeholder="收款人姓名">
+          </div>
+          <div class="form-group">
+            <label>金額</label>
+            <input type="number" id="payment-amount" placeholder="0" min="1">
+          </div>
+          <button type="submit" class="btn-primary btn-block">登記補款</button>
+        </form>
+        <div id="payment-msg" class="msg-area"></div>
+      </div>
+
+      <!-- 成員 -->
+      <div class="tab-panel" id="tab-members" style="display:none">
+        <h2>群組成員</h2>
+        <div id="members-list"></div>
+
+        <div class="section-divider"></div>
+        <h3>新增手動成員</h3>
+        <form id="add-member-form">
+          <div class="form-group input-btn-row">
+            <input type="text" id="member-name" placeholder="成員名稱">
+            <button type="submit" class="btn-primary">新增</button>
+          </div>
+        </form>
+        <div id="member-msg" class="msg-area"></div>
+      </div>
+
+    </div><!-- end tab-panels -->
+  </div><!-- end app -->
+
+  <!-- Merge modal -->
+  <div id="merge-modal" class="modal" style="display:none">
+    <div class="modal-overlay" onclick="closeMergeModal()"></div>
+    <div class="modal-content">
+      <h3>合併成員</h3>
+      <p class="merge-desc">將手動成員 <strong id="merge-manual-name"></strong> 合併為以下真實 LINE 成員後，手動成員將被移除。</p>
+      <div id="merge-line-list" class="merge-list"></div>
+      <div class="modal-btns" style="margin-top:16px">
+        <button type="button" class="btn-secondary" onclick="closeMergeModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit modal -->
+  <div id="modal" class="modal" style="display:none">
+    <div class="modal-overlay" onclick="closeModal()"></div>
+    <div class="modal-content">
+      <h3>修改記帳</h3>
+      <form id="edit-form">
+        <input type="hidden" id="edit-id">
+        <input type="hidden" id="edit-chat-id">
+        <div class="form-group">
+          <label>項目</label>
+          <input type="text" id="edit-item" required>
+        </div>
+        <div class="form-group">
+          <label>金額</label>
+          <input type="number" id="edit-amount" min="1" required>
+        </div>
+        <div class="form-group">
+          <label>收/支</label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="edit_type" value="支出"> 支出
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="edit_type" value="收入"> 收入
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>日期</label>
+          <input type="date" id="edit-date">
+        </div>
+        <div class="modal-btns">
+          <button type="submit" class="btn-primary">儲存</button>
+          <button type="button" class="btn-secondary" onclick="closeModal()">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>const LIFF_ID = "{{ liff_id }}";</script>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

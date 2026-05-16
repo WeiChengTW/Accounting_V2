@@ -1,0 +1,7 @@
+version: "2"
+authtoken: 3Dn6ZJ7K9tkzJxuibc5EbVmM39A_63c3QXsuh9m6K6RZC2ewt
+web_addr: 4042
+tunnels:
+  accounting_v2:
+    proto: http
+    addr: 5001
