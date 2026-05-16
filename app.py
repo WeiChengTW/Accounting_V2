@@ -76,6 +76,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
                 chat_id TEXT NOT NULL DEFAULT 'unknown',
+                user_name TEXT NOT NULL DEFAULT '',
                 item TEXT NOT NULL,
                 amount INTEGER NOT NULL,
                 record_type TEXT NOT NULL,
@@ -85,6 +86,8 @@ def init_db():
         columns = {row[1] for row in conn.execute("PRAGMA table_info(records)").fetchall()}
         if "chat_id" not in columns:
             conn.execute("ALTER TABLE records ADD COLUMN chat_id TEXT NOT NULL DEFAULT 'unknown'")
+        if "user_name" not in columns:
+            conn.execute("ALTER TABLE records ADD COLUMN user_name TEXT NOT NULL DEFAULT ''")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS manual_members (
                 chat_id TEXT NOT NULL,
@@ -125,10 +128,10 @@ def normalize_member_name(name_text):
     return name
 
 
-def save_record(user_id, chat_id, item, amount, record_type, created_at):
+def save_record(user_id, chat_id, user_name, item, amount, record_type, created_at):
     run_query(
-        "INSERT INTO records (user_id, chat_id, item, amount, record_type, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (user_id, chat_id, item, amount, record_type, created_at.isoformat()),
+        "INSERT INTO records (user_id, chat_id, user_name, item, amount, record_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (user_id, chat_id, user_name, item, amount, record_type, created_at.isoformat()),
     )
 
 
@@ -534,19 +537,28 @@ def api_get_records():
     start, end = range_start_end(range_spec)
 
     rows = run_query(
-        "SELECT id, user_id, item, amount, record_type, created_at FROM records WHERE chat_id = ? AND created_at >= ? AND created_at < ? ORDER BY created_at DESC, id DESC",
+        "SELECT id, user_id, user_name, item, amount, record_type, created_at FROM records WHERE chat_id = ? AND created_at >= ? AND created_at < ? ORDER BY created_at DESC, id DESC",
         (chat_id, start.isoformat(), end.isoformat()),
         fetch_mode="all",
     )
+    # Fall back to members table then LINE API only for old records without stored user_name
+    name_cache = None
+    def get_name(user_id, stored_name):
+        if stored_name:
+            return stored_name
+        nonlocal name_cache
+        if name_cache is None:
+            name_cache = {uid: name for uid, name in get_db_members(chat_id)}
+        return name_cache.get(user_id) or resolve_display_name(user_id, chat_id)
     records = [
         {
             "id": row[0],
             "user_id": row[1],
-            "name": resolve_display_name(row[1], chat_id),
-            "item": row[2],
-            "amount": row[3],
-            "record_type": row[4],
-            "created_at": row[5],
+            "name": get_name(row[1], row[2]),
+            "item": row[3],
+            "amount": row[4],
+            "record_type": row[5],
+            "created_at": row[6],
         }
         for row in rows
     ]
@@ -561,6 +573,7 @@ def api_create_record():
 
     data = request.get_json()
     chat_id = data.get("chat_id", "")
+    user_name = (data.get("user_name") or "").strip()
     item = (data.get("item") or "").strip()
     record_type = data.get("record_type", "支出")
     date_str = data.get("date", "")
@@ -579,7 +592,7 @@ def api_create_record():
     except ValueError:
         created_at = get_now()
 
-    save_record(user_id, chat_id, item, amount, record_type, created_at)
+    save_record(user_id, chat_id, user_name, item, amount, record_type, created_at)
     return jsonify({"ok": True})
 
 
@@ -639,8 +652,9 @@ def api_summary():
     prev_balance = get_previous_month_balance(chat_id, range_spec)
     balance = prev_balance + total_income - total_expense
 
+    name_cache = {uid: name for uid, name in get_db_members(chat_id)}
     paid_by_user = [
-        {"user_id": uid, "name": resolve_display_name(uid, chat_id), "paid": paid}
+        {"user_id": uid, "name": name_cache.get(uid) or resolve_display_name(uid, chat_id), "paid": paid}
         for uid, paid in paid_rows
     ]
     return jsonify({

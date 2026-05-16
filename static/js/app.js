@@ -1,3 +1,32 @@
+// ─── Theme ────────────────────────────────────────────────────
+(function initTheme() {
+  const saved = localStorage.getItem("theme");
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.setAttribute("data-theme", saved || (prefersDark ? "dark" : "light"));
+})();
+
+const SVG_SUN  = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>`;
+const SVG_MOON = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
+
+function setupTheme() {
+  const btn = document.getElementById("theme-toggle");
+  if (!btn) return;
+  _updateThemeIcon(document.documentElement.getAttribute("data-theme"));
+  btn.addEventListener("click", () => {
+    const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    localStorage.setItem("theme", next);
+    _updateThemeIcon(next);
+  });
+}
+
+function _updateThemeIcon(theme) {
+  const btn = document.getElementById("theme-toggle");
+  if (!btn) return;
+  btn.innerHTML = theme === "dark" ? SVG_SUN : SVG_MOON;
+  btn.setAttribute("aria-label", theme === "dark" ? "切換淺色模式" : "切換深色模式");
+}
+
 // ─── Globals ──────────────────────────────────────────────────
 let ACCESS_TOKEN = "";
 let CHAT_ID = "";
@@ -13,22 +42,21 @@ liff.init({ liffId: LIFF_ID })
     }
     ACCESS_TOKEN = liff.getAccessToken();
     const ctx = liff.getContext();
-    if (ctx) {
-      if (ctx.groupId) CHAT_ID = `group:${ctx.groupId}`;
-      else if (ctx.roomId) CHAT_ID = `room:${ctx.roomId}`;
-      else if (ctx.userId) CHAT_ID = `user:${ctx.userId}`;
-    }
-    // Fallback: read from URL param (passed by bot in LIFF URL)
-    if (!CHAT_ID) {
-      const params = new URLSearchParams(location.search);
-      CHAT_ID = params.get("chat_id") || "";
-    }
-    // Fallback: localStorage (persists across LIFF restarts)
+    // Priority 1: URL param from bot message — most reliable, has real LINE group ID
+    const _urlParams = new URLSearchParams(location.search);
+    CHAT_ID = _urlParams.get("chat_id") || "";
+    // Priority 2: localStorage from previous session
     if (!CHAT_ID) {
       CHAT_ID = localStorage.getItem("accounting_chat_id") || "";
     }
-    // Persist for next time
-    if (CHAT_ID) localStorage.setItem("accounting_chat_id", CHAT_ID);
+    // Priority 3: liff.getContext() user ID (last resort for personal use)
+    if (!CHAT_ID && ctx && ctx.userId) {
+      CHAT_ID = `user:${ctx.userId}`;
+    }
+    // Persist group/room ID for next time
+    if (CHAT_ID && !CHAT_ID.startsWith("user:")) {
+      localStorage.setItem("accounting_chat_id", CHAT_ID);
+    }
     // Get user profile and register as member
     try {
       const profile = await liff.getProfile();
@@ -54,6 +82,7 @@ function initApp() {
   document.getElementById("records-month").value = thisMonth;
   document.getElementById("settlement-month").value = thisMonth;
 
+  setupTheme();
   setupTabs();
   setupForms();
   loadRecords();
@@ -105,33 +134,79 @@ function showMsg(elementId, text, isError = false) {
   setTimeout(() => { el.textContent = ""; el.className = "msg-area"; }, 3000);
 }
 
+// ─── Utils ────────────────────────────────────────────────────
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function fmt(n) {
+  return Number(n).toLocaleString("zh-TW") + " 元";
+}
+
+let _toastTimer = null;
+function showToast(msg, isError = false) {
+  const el = document.getElementById("toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.className = "toast" + (isError ? " error" : "");
+  el.offsetHeight; // force reflow
+  el.classList.add("show");
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.classList.remove("show"); }, 3000);
+}
+
+const AVATAR_COLORS = ["#06C755", "#1976d2", "#FF9800", "#9c27b0", "#e53935", "#00897b"];
+function avatarColor(name) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) & 0xffff;
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+}
+
 // ─── Add record ───────────────────────────────────────────────
 function setupForms() {
+  // Segmented control for record type
+  document.querySelectorAll(".seg-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".seg-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      document.getElementById("record-type-hidden").value = btn.dataset.value;
+    });
+  });
+
   document.getElementById("add-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const btn = e.target.querySelector("button[type=submit]");
     btn.disabled = true;
+    btn.textContent = "記帳中...";
     const item = document.getElementById("item").value.trim();
     const amount = document.getElementById("amount").value;
-    const recordType = document.querySelector('input[name="record_type"]:checked').value;
+    const recordType = document.getElementById("record-type-hidden").value;
     const dateValue = document.getElementById("date").value;
     try {
       await api("POST", "/api/record", {
         chat_id: CHAT_ID,
+        user_name: USER_NAME,
         item,
         amount,
         record_type: recordType,
         date: dateValue,
       });
-      showMsg("add-msg", "記帳成功！");
+      showToast("記帳成功！");
       e.target.reset();
       document.getElementById("date").value = new Date().toISOString().slice(0, 10);
-      document.querySelector('input[name="record_type"][value="支出"]').checked = true;
+      // Reset segmented control to 支出
+      document.querySelectorAll(".seg-btn").forEach((b) => b.classList.remove("active"));
+      document.querySelector('.seg-btn[data-value="支出"]').classList.add("active");
+      document.getElementById("record-type-hidden").value = "支出";
 
       // Send Flex message to group
       if (liff.isInClient()) {
         const isExpense = recordType === "支出";
-        const color = isExpense ? "#e53935" : "#1976d2";
+        const color = isExpense ? "#EF4444" : "#10B981";
         const headerLabel = isExpense ? "📤 支出記帳" : "📥 收入記帳";
         liff.sendMessages([{
           type: "flex",
@@ -158,9 +233,10 @@ function setupForms() {
         }]).catch(() => {});
       }
     } catch (err) {
-      showMsg("add-msg", `失敗：${err.message}`, true);
+      showToast(`失敗：${err.message}`, true);
     } finally {
       btn.disabled = false;
+      btn.textContent = "記帳";
     }
   });
 
@@ -186,12 +262,16 @@ function setupForms() {
   document.getElementById("payment-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const btn = e.target.querySelector("button[type=submit]");
+    const toName = document.getElementById("payment-to").value.trim();
+    const amount = document.getElementById("payment-amount").value;
+    if (!toName || !amount) return;
+    if (!confirm(`確認登記：${toName} 補了 ${amount} 元？`)) return;
     btn.disabled = true;
     try {
       await api("POST", "/api/payment", {
         chat_id: CHAT_ID,
-        to_name: document.getElementById("payment-to").value.trim(),
-        amount: document.getElementById("payment-amount").value,
+        to_name: toName,
+        amount,
       });
       showMsg("payment-msg", "補款登記成功！");
       e.target.reset();
@@ -237,36 +317,40 @@ async function loadRecords() {
       api("GET", "/api/records", null, { month }),
     ]);
 
-    // Summary card
+    const balanceClass = summaryData.balance >= 0 ? "income" : "expense";
     summaryEl.innerHTML = `
       <div class="summary-grid">
         <div class="summary-item">
-          <span class="label">前月結餘</span>
-          <span class="value">${summaryData.previous_month_balance}</span>
+          <span class="label">📅 前月結餘</span>
+          <span class="value">${fmt(summaryData.previous_month_balance)}</span>
         </div>
         <div class="summary-item">
-          <span class="label">本月收入</span>
-          <span class="value income">${summaryData.total_income}</span>
+          <span class="label">💰 本月收入</span>
+          <span class="value income">${fmt(summaryData.total_income)}</span>
         </div>
         <div class="summary-item">
-          <span class="label">本月支出</span>
-          <span class="value expense">${summaryData.total_expense}</span>
+          <span class="label">💸 本月支出</span>
+          <span class="value expense">${fmt(summaryData.total_expense)}</span>
         </div>
         <div class="summary-item">
-          <span class="label">目前餘額</span>
-          <span class="value ${summaryData.balance >= 0 ? 'income' : 'expense'}">${summaryData.balance}</span>
+          <span class="label">🏦 目前餘額</span>
+          <span class="value ${balanceClass}">${fmt(summaryData.balance)}</span>
         </div>
       </div>
       ${summaryData.paid_by_user.length ? `
         <div class="paid-summary">
           <p class="section-title">各人支出</p>
-          ${summaryData.paid_by_user.map(u => `<div class="paid-row"><span>${u.name}</span><span>${u.paid}</span></div>`).join("")}
+          ${summaryData.paid_by_user.map(u => `<div class="paid-row"><span>${escHtml(u.name)}</span><span>${fmt(u.paid)}</span></div>`).join("")}
         </div>` : ""}
     `;
 
     CURRENT_RECORDS = recordsData.records;
     if (!recordsData.records.length) {
-      listEl.innerHTML = "<p class='empty-msg'>該月份尚無紀錄</p>";
+      listEl.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">📝</div>
+          <div>這個月還沒有記帳</div>
+        </div>`;
       return;
     }
 
@@ -277,7 +361,7 @@ async function loadRecords() {
           <div class="record-header">
             <span class="record-item">${escHtml(r.item)}</span>
             <span class="record-amount ${r.record_type === '支出' ? 'expense' : 'income'}">
-              ${r.record_type === '支出' ? '-' : '+'}${r.amount}
+              ${r.record_type === '支出' ? '-' : '+'}${fmt(r.amount)}
             </span>
           </div>
           <div class="record-meta">
@@ -334,40 +418,52 @@ async function loadSettlement() {
     const data = await api("GET", "/api/settlement", null, { month });
 
     if (data.message) {
-      el.innerHTML = `<p class="empty-msg">${data.message}</p>`;
+      el.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">💰</div>
+          <div>${data.message}</div>
+        </div>`;
       return;
     }
 
     el.innerHTML = `
       <div class="card">
-        <p class="card-title">${data.month} 算錢結果</p>
-        <div class="stat-row"><span>前月結餘</span><span>${data.previous_month_balance}</span></div>
-        <div class="stat-row"><span>本月收入</span><span class="income">${data.total_income}</span></div>
-        <div class="stat-row"><span>本期總支出</span><span class="expense">${data.total_expense}</span></div>
-        <div class="stat-row"><span>銀行可支應</span><span>${data.bank_reimbursement}</span></div>
-        <div class="stat-row highlight"><span>每人須補差額</span><span>${data.per_person_extra}</span></div>
+        <div class="card-header card-header--blue">💹 ${escHtml(data.month)} 統計</div>
+        <div class="stat-row"><span>前月結餘</span><span>${fmt(data.previous_month_balance)}</span></div>
+        <div class="stat-row"><span>本月收入</span><span class="income">${fmt(data.total_income)}</span></div>
+        <div class="stat-row"><span>本期總支出</span><span class="expense">${fmt(data.total_expense)}</span></div>
+        <div class="stat-row"><span>銀行可支應</span><span>${fmt(data.bank_reimbursement)}</span></div>
+        <div class="stat-row highlight"><span>每人須補差額</span><span>${fmt(data.per_person_extra)}</span></div>
       </div>
 
       <div class="card">
-        <p class="card-title">付款明細</p>
+        <div class="card-header card-header--green">👤 每人分攤</div>
         ${data.participants.map((p) => `
-          <div class="stat-row">
-            <span>${escHtml(p.name)}</span>
-            <span>付了 ${p.paid}，可領 ${p.bank_withdraw}</span>
+          <div class="participant-row">
+            <span class="participant-name">${escHtml(p.name)}</span>
+            <span class="participant-paid">付：${fmt(p.paid)}</span>
+            <span class="participant-withdraw">收：${fmt(p.bank_withdraw)}</span>
           </div>`).join("")}
       </div>
 
       ${data.transfers.length ? `
         <div class="card">
-          <p class="card-title">轉帳建議</p>
+          <div class="card-header card-header--orange">🔁 轉帳建議</div>
           ${data.transfers.map((t) => `
             <div class="transfer-row">
               <span>${escHtml(t.from_name)}</span>
               <span class="arrow">→</span>
               <span>${escHtml(t.to_name)}</span>
-              <span class="transfer-amt">${t.amount}</span>
+              <span class="transfer-amt">${fmt(t.amount)}</span>
+              <button class="btn-copy" data-from="${escHtml(t.from_name)}" data-to="${escHtml(t.to_name)}" data-amount="${t.amount}" onclick="copyTransfer(this)" title="複製">📋</button>
             </div>`).join("")}
-        </div>` : `<div class="card"><p class="empty-msg">無需轉帳</p></div>`}
+        </div>` : `
+        <div class="card">
+          <div class="empty-state" style="padding:20px 0">
+            <div class="empty-icon">✅</div>
+            <div>無需轉帳</div>
+          </div>
+        </div>`}
 
       ${data.payments.length ? `
         <div class="card">
@@ -375,13 +471,23 @@ async function loadSettlement() {
           ${data.payments.map((p) => `
             <div class="stat-row">
               <span>${escHtml(p.from_name)} → ${escHtml(p.to_name)}</span>
-              <span>${p.amount}</span>
+              <span>${fmt(p.amount)}</span>
             </div>`).join("")}
         </div>` : ""}
     `;
   } catch (err) {
     el.innerHTML = `<p class="error-msg">載入失敗：${err.message}</p>`;
   }
+}
+
+function copyTransfer(btn) {
+  const from = btn.dataset.from;
+  const to = btn.dataset.to;
+  const amount = Number(btn.dataset.amount).toLocaleString("zh-TW");
+  const text = `${from} 轉給 ${to} 共 ${amount} 元`;
+  navigator.clipboard.writeText(text)
+    .then(() => showToast("已複製！"))
+    .catch(() => showToast("複製失敗", true));
 }
 
 // ─── Members tab ──────────────────────────────────────────────
@@ -391,20 +497,31 @@ async function loadMembers() {
   try {
     const data = await api("GET", "/api/members");
     if (!data.members.length) {
-      el.innerHTML = "<p class='empty-msg'>尚無成員資料</p>";
+      el.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">👥</div>
+          <div>尚無成員資料</div>
+        </div>`;
       return;
     }
     const lineMembers = data.members.filter(m => m.source === "line");
-    el.innerHTML = data.members.map((m) => `
-      <div class="member-row">
-        <span>${escHtml(m.name)}</span>
-        <span class="member-source">${m.source === "manual" ? "手動" : "群組"}</span>
-        ${m.source === "manual" ? `
-          ${lineMembers.length ? `<button class="btn-edit" onclick="openMergeModal('${escHtml(m.name)}', ${JSON.stringify(lineMembers).replace(/"/g, '&quot;')})">合併</button>` : ""}
-          <button class="btn-delete" onclick="deleteMember('${escHtml(m.name)}')">刪除</button>
-        ` : ""}
-      </div>
-    `).join("");
+    el.innerHTML = `
+      <p class="section-title">共 ${data.members.length} 人</p>
+      ${data.members.map((m) => {
+        const color = avatarColor(m.name);
+        const initial = m.name.charAt(0);
+        return `
+          <div class="member-row">
+            <div class="member-avatar" style="background:${color}">${escHtml(initial)}</div>
+            <span>${escHtml(m.name)}</span>
+            <span class="member-source">${m.source === "manual" ? "手動" : "群組"}</span>
+            ${m.source === "manual" ? `
+              ${lineMembers.length ? `<button class="btn-edit" onclick="openMergeModal('${escHtml(m.name)}', ${JSON.stringify(lineMembers).replace(/"/g, '&quot;')})">合併</button>` : ""}
+              <button class="btn-delete" onclick="deleteMember('${escHtml(m.name)}')">刪除</button>
+            ` : ""}
+          </div>`;
+      }).join("")}
+    `;
   } catch (err) {
     el.innerHTML = `<p class="error-msg">載入失敗：${err.message}</p>`;
   }
@@ -426,7 +543,7 @@ function closeMergeModal() {
   document.getElementById("merge-modal").style.display = "none";
 }
 
-async function confirmMerge(manualName, realUserId, realName) {
+async function confirmMerge(manualName, _realUserId, realName) {
   if (!confirm(`確定將手動成員「${manualName}」合併為「${realName}」？\n手動成員將被移除。`)) return;
   try {
     await api("POST", "/api/members/merge", { chat_id: CHAT_ID, manual_name: manualName });
@@ -445,13 +562,4 @@ async function deleteMember(name) {
   } catch (err) {
     alert(`刪除失敗：${err.message}`);
   }
-}
-
-// ─── Utils ────────────────────────────────────────────────────
-function escHtml(str) {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
