@@ -101,11 +101,15 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id TEXT NOT NULL,
                 from_user_id TEXT NOT NULL,
+                to_user_id TEXT NOT NULL DEFAULT '',
                 to_name TEXT NOT NULL,
                 amount INTEGER NOT NULL,
                 created_at TEXT NOT NULL
             )
         """)
+        sp_cols = {r[1] for r in conn.execute("PRAGMA table_info(settlement_payments)")}
+        if "to_user_id" not in sp_cols:
+            conn.execute("ALTER TABLE settlement_payments ADD COLUMN to_user_id TEXT NOT NULL DEFAULT ''")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS members (
                 chat_id TEXT NOT NULL,
@@ -224,10 +228,10 @@ def get_db_members(chat_id):
     return [(r[0], r[1], r[2]) for r in rows]
 
 
-def save_settlement_payment(chat_id, from_user_id, to_name, amount, created_at=None):
+def save_settlement_payment(chat_id, from_user_id, to_name, amount, created_at=None, to_user_id=""):
     run_query(
-        "INSERT INTO settlement_payments (chat_id, from_user_id, to_name, amount, created_at) VALUES (?, ?, ?, ?, ?)",
-        (chat_id, from_user_id, to_name, amount, created_at or get_now().isoformat()),
+        "INSERT INTO settlement_payments (chat_id, from_user_id, to_user_id, to_name, amount, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (chat_id, from_user_id, to_user_id or "", to_name, amount, created_at or get_now().isoformat()),
     )
 
 
@@ -431,7 +435,7 @@ def get_payments_for_range(chat_id, range_spec):
     start, end = range_start_end(range_spec)
     params = [chat_id, start.isoformat(), end.isoformat()]
     return run_query(
-        "SELECT id, from_user_id, to_name, amount FROM settlement_payments WHERE chat_id = ? AND created_at >= ? AND created_at < ? ORDER BY created_at ASC",
+        "SELECT id, from_user_id, to_user_id, to_name, amount FROM settlement_payments WHERE chat_id = ? AND created_at >= ? AND created_at < ? ORDER BY created_at ASC",
         params, fetch_mode="all"
     )
 
@@ -605,12 +609,14 @@ def api_get_records():
 
 @app.route("/api/record", methods=["POST"])
 def api_create_record():
-    user_id = get_verified_user_id()
-    if not user_id:
+    verified_user_id = get_verified_user_id()
+    if not verified_user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.get_json()
     chat_id = data.get("chat_id", "")
+    payer_user_id = (data.get("user_id") or "").strip()
+    user_id = payer_user_id if payer_user_id else verified_user_id
     user_name = (data.get("user_name") or "").strip()
     item = (data.get("item") or "").strip()
     record_type = data.get("record_type", "支出")
@@ -793,8 +799,8 @@ def api_settlement():
     payment_rows = get_payments_for_range(chat_id, range_spec)
     name_to_id = {display_name(uid).strip(): uid for uid, _ in participant_rows}
     adjust = {uid: 0 for uid in all_ids}
-    for _pid, from_uid, to_name, amt in payment_rows:
-        to_uid = name_to_id.get(to_name)
+    for _pid, from_uid, to_uid_stored, to_name, amt in payment_rows:
+        to_uid = to_uid_stored if to_uid_stored else name_to_id.get(to_name)
         if from_uid in adjust and to_uid and to_uid in adjust:
             adjust[from_uid] += amt
             adjust[to_uid] -= amt
@@ -819,6 +825,7 @@ def api_settlement():
             transfers.append({
                 "from_user_id": d_uid,
                 "from_name": display_name(d_uid),
+                "to_user_id": c_uid,
                 "to_name": display_name(c_uid),
                 "amount": amt,
             })
@@ -840,7 +847,7 @@ def api_settlement():
     ]
     paid_payments = [
         {"id": pid, "from_name": display_name(f_uid), "to_name": to_name, "amount": amt}
-        for pid, f_uid, to_name, amt in payment_rows
+        for pid, f_uid, _to_uid_s, to_name, amt in payment_rows
     ]
 
     return jsonify({
@@ -897,9 +904,10 @@ def api_create_payment():
         payment_date = get_now().isoformat()
 
     from_user_id = (data.get("from_user_id") or "").strip() or user_id
+    to_user_id = (data.get("to_user_id") or "").strip()
 
     save_manual_member(chat_id, to_name)
-    save_settlement_payment(chat_id, from_user_id, to_name, amount, payment_date)
+    save_settlement_payment(chat_id, from_user_id, to_name, amount, payment_date, to_user_id)
     return jsonify({"ok": True})
 
 
@@ -919,7 +927,7 @@ def api_unsettled_check():
     month_str = last.strftime("%Y-%m")
     range_spec = parse_month_param(month_str)
 
-    _, _, total_expense = get_balance_summary(chat_id, range_spec)
+    total_expense, _, _ = get_balance_summary(chat_id, range_spec)
     if total_expense == 0:
         return jsonify({"unsettled": False, "month": month_str})
 

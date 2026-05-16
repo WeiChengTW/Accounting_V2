@@ -92,6 +92,7 @@ function initApp() {
   setupTheme();
   setupTabs();
   setupForms();
+  refreshPayerSelector();
   loadRecords();
   checkUnsettled();
 }
@@ -174,6 +175,35 @@ function avatarColor(name) {
 }
 
 // ─── Add record ───────────────────────────────────────────────
+function refreshPayerSelector() {
+  const sel = document.getElementById("add-payer-id");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = "";
+  if (!CURRENT_MEMBERS.length) {
+    const opt = document.createElement("option");
+    opt.value = CURRENT_USER_ID || "";
+    opt.dataset.name = USER_NAME || "";
+    opt.textContent = USER_NAME || "（本人）";
+    sel.appendChild(opt);
+    return;
+  }
+  CURRENT_MEMBERS.forEach(m => {
+    const opt = document.createElement("option");
+    opt.value = m.user_id;
+    opt.dataset.name = m.name;
+    opt.textContent = m.name;
+    sel.appendChild(opt);
+  });
+  // Restore previous selection, else default to current user
+  if (prev && [...sel.options].some(o => o.value === prev)) {
+    sel.value = prev;
+  } else if (CURRENT_USER_ID) {
+    const match = [...sel.options].find(o => o.value === CURRENT_USER_ID);
+    if (match) sel.value = match.value;
+  }
+}
+
 function setupForms() {
   // Segmented control for record type
   document.querySelectorAll(".seg-btn").forEach((btn) => {
@@ -194,9 +224,13 @@ function setupForms() {
     const recordType = document.getElementById("record-type-hidden").value;
     const dateValue = document.getElementById("date").value;
     try {
+      const payerSel = document.getElementById("add-payer-id");
+      const payerUserId = payerSel ? payerSel.value : (CURRENT_USER_ID || "");
+      const payerName = payerSel ? (payerSel.selectedOptions[0]?.dataset.name || USER_NAME) : USER_NAME;
       await api("POST", "/api/record", {
         chat_id: CHAT_ID,
-        user_name: USER_NAME,
+        user_id: payerUserId,
+        user_name: payerName,
         item,
         amount,
         record_type: recordType,
@@ -306,6 +340,7 @@ async function loadRecords() {
       api("GET", "/api/members"),
     ]);
     CURRENT_MEMBERS = membersData.members || [];
+    refreshPayerSelector();
 
     const balanceClass = summaryData.balance >= 0 ? "income" : "expense";
     summaryEl.innerHTML = `
@@ -469,7 +504,7 @@ async function loadSettlement() {
               <span class="arrow">→</span>
               <span>${escHtml(t.to_name)}</span>
               <span class="transfer-amt">${fmt(t.amount)}</span>
-              <button class="btn-repay" data-to="${escHtml(t.to_name)}" data-amount="${t.amount}" data-from-user-id="${escHtml(t.from_user_id)}" data-from-name="${escHtml(t.from_name)}" onclick="openPaymentInline(this)">還款</button>
+              <button class="btn-repay" data-to="${escHtml(t.to_name)}" data-to-user-id="${escHtml(t.to_user_id)}" data-amount="${t.amount}" data-from-user-id="${escHtml(t.from_user_id)}" data-from-name="${escHtml(t.from_name)}" onclick="openPaymentInline(this)">還款</button>
             </div>`).join("")}
           ${data.participants.some(p => p.bank_withdraw > 0) ? `
           <div class="bank-withdraw-section">
@@ -529,8 +564,7 @@ async function checkUnsettled() {
 function _updateUnsettledBanner() {
   const banner = document.getElementById("unsettled-banner");
   if (!banner) return;
-  const month = document.getElementById("settlement-month").value;
-  if (UNSETTLED_MONTH && month === UNSETTLED_MONTH) {
+  if (UNSETTLED_MONTH) {
     banner.style.display = "flex";
     const [y, m] = UNSETTLED_MONTH.split("-");
     banner.textContent = `⚠️ ${y} 年 ${parseInt(m, 10)} 月尚未結算`;
@@ -544,6 +578,7 @@ function openPaymentInline(btn) {
   document.querySelectorAll(".btn-repay").forEach(b => b.classList.remove("active"));
 
   const toName = btn.dataset.to;
+  const toUserId = btn.dataset.toUserId || "";
   const defaultAmt = btn.dataset.amount;
   const fromUserId = btn.dataset.fromUserId;
   const fromName = btn.dataset.fromName;
@@ -563,6 +598,7 @@ function openPaymentInline(btn) {
   const inline = document.createElement("div");
   inline.className = "payment-inline";
   inline.dataset.to = toName;
+  inline.dataset.toUserId = toUserId;
   inline.dataset.fromUserId = fromUserId;
   inline.innerHTML = `
     <div class="payment-inline-label">還給 ${escHtml(toName)}</div>
@@ -604,7 +640,8 @@ async function submitPaymentInline(btn) {
   try {
     const month = document.getElementById("settlement-month").value;
     const fromUserId = inline.dataset.fromUserId || "";
-    await api("POST", "/api/payment", { chat_id: CHAT_ID, to_name: toName, amount, month, from_user_id: fromUserId });
+    const toUserId = inline.dataset.toUserId || "";
+    await api("POST", "/api/payment", { chat_id: CHAT_ID, to_name: toName, to_user_id: toUserId, amount, month, from_user_id: fromUserId });
     showToast(`已登記還款 ${fmt(amount)} 給 ${escHtml(toName)}`);
     inline.remove();
     loadSettlement();
