@@ -31,6 +31,7 @@ function _updateThemeIcon(theme) {
 let ACCESS_TOKEN = "";
 let CHAT_ID = "";
 let USER_NAME = "";
+let CURRENT_USER_ID = "";
 let CURRENT_RECORDS = [];
 let CURRENT_MEMBERS = [];
 
@@ -62,6 +63,7 @@ liff.init({ liffId: LIFF_ID })
     try {
       const profile = await liff.getProfile();
       USER_NAME = profile.displayName || "";
+      CURRENT_USER_ID = profile.userId || "";
       if (CHAT_ID && USER_NAME) {
         api("POST", "/api/register_member", {
           chat_id: CHAT_ID,
@@ -91,6 +93,7 @@ function initApp() {
   setupTabs();
   setupForms();
   loadRecords();
+  checkUnsettled();
 }
 
 // ─── Tabs ─────────────────────────────────────────────────────
@@ -268,30 +271,6 @@ function setupForms() {
     }
   });
 
-  document.getElementById("payment-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const btn = e.target.querySelector("button[type=submit]");
-    const toName = document.getElementById("payment-to").value.trim();
-    const amount = document.getElementById("payment-amount").value;
-    if (!toName || !amount) return;
-    if (!confirm(`確認登記：${toName} 補了 ${amount} 元？`)) return;
-    btn.disabled = true;
-    try {
-      await api("POST", "/api/payment", {
-        chat_id: CHAT_ID,
-        to_name: toName,
-        amount,
-      });
-      showMsg("payment-msg", "補款登記成功！");
-      e.target.reset();
-      loadSettlement();
-    } catch (err) {
-      showMsg("payment-msg", `失敗：${err.message}`, true);
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
   document.getElementById("add-member-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const btn = e.target.querySelector("button[type=submit]");
@@ -332,11 +311,11 @@ async function loadRecords() {
     summaryEl.innerHTML = `
       <div class="summary-grid">
         <div class="summary-item">
-          <span class="label">📅 前月結餘</span>
+          <span class="label">📅 銀行額度</span>
           <span class="value">${fmt(summaryData.previous_month_balance)}</span>
         </div>
         <div class="summary-item">
-          <span class="label">💰 本月收入</span>
+          <span class="label">💰 本月撥款</span>
           <span class="value income">${fmt(summaryData.total_income)}</span>
         </div>
         <div class="summary-item">
@@ -344,7 +323,7 @@ async function loadRecords() {
           <span class="value expense">${fmt(summaryData.total_expense)}</span>
         </div>
         <div class="summary-item">
-          <span class="label">🏦 目前餘額</span>
+          <span class="label">🏦 目前可用額度</span>
           <span class="value ${balanceClass}">${fmt(summaryData.balance)}</span>
         </div>
       </div>
@@ -447,6 +426,7 @@ async function loadSettlement() {
   const month = document.getElementById("settlement-month").value;
   const el = document.getElementById("settlement-result");
   el.innerHTML = "<p class='loading-text'>計算中...</p>";
+  _updateUnsettledBanner();
 
   try {
     const data = await api("GET", "/api/settlement", null, { month });
@@ -463,8 +443,8 @@ async function loadSettlement() {
     el.innerHTML = `
       <div class="card">
         <div class="card-header card-header--blue">💹 ${escHtml(data.month)} 統計</div>
-        <div class="stat-row"><span>前月結餘</span><span>${fmt(data.previous_month_balance)}</span></div>
-        <div class="stat-row"><span>本月收入</span><span class="income">${fmt(data.total_income)}</span></div>
+        <div class="stat-row"><span>銀行額度</span><span>${fmt(data.previous_month_balance)}</span></div>
+        <div class="stat-row"><span>本月撥款</span><span class="income">${fmt(data.total_income)}</span></div>
         <div class="stat-row"><span>本期總支出</span><span class="expense">${fmt(data.total_expense)}</span></div>
         <div class="stat-row"><span>銀行可支應</span><span>${fmt(data.bank_reimbursement)}</span></div>
         <div class="stat-row highlight"><span>每人須補差額</span><span>${fmt(data.per_person_extra)}</span></div>
@@ -489,14 +469,32 @@ async function loadSettlement() {
               <span class="arrow">→</span>
               <span>${escHtml(t.to_name)}</span>
               <span class="transfer-amt">${fmt(t.amount)}</span>
-              <button class="btn-copy" data-from="${escHtml(t.from_name)}" data-to="${escHtml(t.to_name)}" data-amount="${t.amount}" onclick="copyTransfer(this)" title="複製">📋</button>
+              <button class="btn-repay" data-to="${escHtml(t.to_name)}" data-amount="${t.amount}" data-from-user-id="${escHtml(t.from_user_id)}" data-from-name="${escHtml(t.from_name)}" onclick="openPaymentInline(this)">還款</button>
             </div>`).join("")}
+          ${data.participants.some(p => p.bank_withdraw > 0) ? `
+          <div class="bank-withdraw-section">
+            <div class="bank-withdraw-title">💳 銀行領回</div>
+            ${data.participants.filter(p => p.bank_withdraw > 0).map(p => `
+              <div class="bank-withdraw-row">
+                <span>${escHtml(p.name)}</span>
+                <span class="bank-withdraw-amt">${fmt(p.bank_withdraw)}</span>
+              </div>`).join("")}
+          </div>` : ""}
         </div>` : `
         <div class="card">
           <div class="empty-state" style="padding:20px 0">
             <div class="empty-icon">✅</div>
             <div>無需轉帳</div>
           </div>
+          ${data.participants.some(p => p.bank_withdraw > 0) ? `
+          <div class="bank-withdraw-section">
+            <div class="bank-withdraw-title">💳 銀行領回</div>
+            ${data.participants.filter(p => p.bank_withdraw > 0).map(p => `
+              <div class="bank-withdraw-row">
+                <span>${escHtml(p.name)}</span>
+                <span class="bank-withdraw-amt">${fmt(p.bank_withdraw)}</span>
+              </div>`).join("")}
+          </div>` : ""}
         </div>`}
 
       ${data.payments.length ? `
@@ -506,6 +504,7 @@ async function loadSettlement() {
             <div class="stat-row">
               <span>${escHtml(p.from_name)} → ${escHtml(p.to_name)}</span>
               <span>${fmt(p.amount)}</span>
+              <button class="btn-delete-payment" onclick="deletePayment(${p.id}, this)">✕</button>
             </div>`).join("")}
         </div>` : ""}
     `;
@@ -514,14 +513,107 @@ async function loadSettlement() {
   }
 }
 
-function copyTransfer(btn) {
-  const from = btn.dataset.from;
-  const to = btn.dataset.to;
-  const amount = Number(btn.dataset.amount).toLocaleString("zh-TW");
-  const text = `${from} 轉給 ${to} 共 ${amount} 元`;
-  navigator.clipboard.writeText(text)
-    .then(() => showToast("已複製！"))
-    .catch(() => showToast("複製失敗", true));
+// ─── Unsettled reminder ───────────────────────────────────────
+let UNSETTLED_MONTH = "";
+
+async function checkUnsettled() {
+  try {
+    const data = await api("GET", "/api/unsettled_check");
+    UNSETTLED_MONTH = data.unsettled ? data.month : "";
+    const badge = document.getElementById("settlement-badge");
+    if (badge) badge.style.display = data.unsettled ? "inline-block" : "none";
+    _updateUnsettledBanner();
+  } catch (_) {}
+}
+
+function _updateUnsettledBanner() {
+  const banner = document.getElementById("unsettled-banner");
+  if (!banner) return;
+  const month = document.getElementById("settlement-month").value;
+  if (UNSETTLED_MONTH && month === UNSETTLED_MONTH) {
+    banner.style.display = "flex";
+    const [y, m] = UNSETTLED_MONTH.split("-");
+    banner.textContent = `⚠️ ${y} 年 ${parseInt(m, 10)} 月尚未結算`;
+  } else {
+    banner.style.display = "none";
+  }
+}
+
+function openPaymentInline(btn) {
+  document.querySelectorAll(".payment-inline").forEach(el => el.remove());
+  document.querySelectorAll(".btn-repay").forEach(b => b.classList.remove("active"));
+
+  const toName = btn.dataset.to;
+  const defaultAmt = btn.dataset.amount;
+  const fromUserId = btn.dataset.fromUserId;
+  const fromName = btn.dataset.fromName;
+  const row = btn.closest(".transfer-row");
+
+  btn.classList.add("active");
+
+  const isSelf = (CURRENT_USER_ID && fromUserId && CURRENT_USER_ID === fromUserId)
+             || (USER_NAME && fromName && USER_NAME === fromName)
+             || (USER_NAME && toName && USER_NAME === toName);
+  const isOther = !isSelf && !!(fromUserId || fromName);
+  if (isOther && !confirm(`你不是 ${fromName}，確定要幫他登記還款給 ${toName} 嗎？`)) {
+    btn.classList.remove("active");
+    return;
+  }
+
+  const inline = document.createElement("div");
+  inline.className = "payment-inline";
+  inline.dataset.to = toName;
+  inline.dataset.fromUserId = fromUserId;
+  inline.innerHTML = `
+    <div class="payment-inline-label">還給 ${escHtml(toName)}</div>
+    <div class="payment-inline-controls">
+      <input type="number" class="payment-inline-input" value="${defaultAmt}" min="1">
+      <button class="btn-primary payment-inline-confirm" onclick="submitPaymentInline(this)">確認還款</button>
+      <button class="btn-secondary payment-inline-cancel" onclick="closePaymentInline(this)">取消</button>
+    </div>
+  `;
+  row.insertAdjacentElement("afterend", inline);
+  inline.querySelector(".payment-inline-input").focus();
+}
+
+async function deletePayment(id, btn) {
+  if (!confirm("確定刪除這筆補款紀錄？")) return;
+  btn.disabled = true;
+  try {
+    await api("DELETE", `/api/payment/${id}`);
+    loadSettlement();
+    checkUnsettled();
+  } catch (err) {
+    showToast(`刪除失敗：${err.message}`, true);
+    btn.disabled = false;
+  }
+}
+
+function closePaymentInline(btn) {
+  btn.closest(".payment-inline").remove();
+  document.querySelectorAll(".btn-repay").forEach(b => b.classList.remove("active"));
+}
+
+async function submitPaymentInline(btn) {
+  const inline = btn.closest(".payment-inline");
+  const toName = inline.dataset.to;
+  const amount = inline.querySelector(".payment-inline-input").value;
+  if (!amount || Number(amount) < 1) return;
+  btn.disabled = true;
+  btn.textContent = "登記中...";
+  try {
+    const month = document.getElementById("settlement-month").value;
+    const fromUserId = inline.dataset.fromUserId || "";
+    await api("POST", "/api/payment", { chat_id: CHAT_ID, to_name: toName, amount, month, from_user_id: fromUserId });
+    showToast(`已登記還款 ${fmt(amount)} 給 ${escHtml(toName)}`);
+    inline.remove();
+    loadSettlement();
+    checkUnsettled();
+  } catch (err) {
+    showToast(`失敗：${err.message}`, true);
+    btn.disabled = false;
+    btn.textContent = "確認還款";
+  }
 }
 
 // ─── Members tab ──────────────────────────────────────────────

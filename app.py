@@ -116,6 +116,14 @@ def init_db():
                 PRIMARY KEY (chat_id, user_id)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS group_config (
+                chat_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (chat_id, key)
+            )
+        """)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(members)").fetchall()}
         if "picture_url" not in columns:
             conn.execute("ALTER TABLE members ADD COLUMN picture_url TEXT NOT NULL DEFAULT ''")
@@ -216,10 +224,10 @@ def get_db_members(chat_id):
     return [(r[0], r[1], r[2]) for r in rows]
 
 
-def save_settlement_payment(chat_id, from_user_id, to_name, amount):
+def save_settlement_payment(chat_id, from_user_id, to_name, amount, created_at=None):
     run_query(
         "INSERT INTO settlement_payments (chat_id, from_user_id, to_name, amount, created_at) VALUES (?, ?, ?, ?, ?)",
-        (chat_id, from_user_id, to_name, amount, get_now().isoformat()),
+        (chat_id, from_user_id, to_name, amount, created_at or get_now().isoformat()),
     )
 
 
@@ -371,22 +379,43 @@ def get_balance_summary(chat_id, range_spec):
 
 def get_previous_month_balance(chat_id, range_spec):
     y, m = range_spec["year"], range_spec["month"]
-    if m == 1:
-        prev_start = datetime(y - 1, 12, 1)
-    else:
-        prev_start = datetime(y, m - 1, 1)
     curr_start = datetime(y, m, 1)
-    where = "chat_id = ? AND created_at >= ? AND created_at < ?"
-    params = [chat_id, prev_start.isoformat(), curr_start.isoformat()]
-    income = run_query(
-        f"SELECT COALESCE(SUM(amount), 0) FROM records WHERE {where} AND record_type = '收入'",
-        params, fetch_mode="one"
-    )[0]
-    expense = run_query(
-        f"SELECT COALESCE(SUM(amount), 0) FROM records WHERE {where} AND record_type = '支出'",
-        params, fetch_mode="one"
-    )[0]
-    return income - expense
+
+    # Determine the start of accounting (balance_start_month)
+    start_month_row = run_query(
+        "SELECT value FROM group_config WHERE chat_id=? AND key='balance_start_month'",
+        [chat_id], fetch_mode="one"
+    )
+    if start_month_row:
+        sy, sm = map(int, start_month_row[0].split("-"))
+        range_start = datetime(sy, sm, 1)
+    else:
+        range_start = datetime(y - 1, 12, 1) if m == 1 else datetime(y, m - 1, 1)
+
+    # If current month is at or before start, no carry-over
+    if curr_start <= range_start:
+        return 0
+
+    # Iterate month by month, balance floors at 0 each month
+    balance = 0
+    ptr = range_start
+    while ptr < curr_start:
+        if ptr.month == 12:
+            next_ptr = datetime(ptr.year + 1, 1, 1)
+        else:
+            next_ptr = datetime(ptr.year, ptr.month + 1, 1)
+        params = [chat_id, ptr.isoformat(), next_ptr.isoformat()]
+        income = run_query(
+            "SELECT COALESCE(SUM(amount), 0) FROM records WHERE chat_id=? AND created_at>=? AND created_at<? AND record_type='收入'",
+            params, fetch_mode="one"
+        )[0]
+        expense = run_query(
+            "SELECT COALESCE(SUM(amount), 0) FROM records WHERE chat_id=? AND created_at>=? AND created_at<? AND record_type='支出'",
+            params, fetch_mode="one"
+        )[0]
+        balance = max(balance + income - expense, 0)
+        ptr = next_ptr
+    return balance
 
 
 def get_expense_by_user(chat_id, range_spec):
@@ -402,7 +431,7 @@ def get_payments_for_range(chat_id, range_spec):
     start, end = range_start_end(range_spec)
     params = [chat_id, start.isoformat(), end.isoformat()]
     return run_query(
-        "SELECT from_user_id, to_name, amount FROM settlement_payments WHERE chat_id = ? AND created_at >= ? AND created_at < ? ORDER BY created_at ASC",
+        "SELECT id, from_user_id, to_name, amount FROM settlement_payments WHERE chat_id = ? AND created_at >= ? AND created_at < ? ORDER BY created_at ASC",
         params, fetch_mode="all"
     )
 
@@ -764,7 +793,7 @@ def api_settlement():
     payment_rows = get_payments_for_range(chat_id, range_spec)
     name_to_id = {display_name(uid).strip(): uid for uid, _ in participant_rows}
     adjust = {uid: 0 for uid in all_ids}
-    for from_uid, to_name, amt in payment_rows:
+    for _pid, from_uid, to_name, amt in payment_rows:
         to_uid = name_to_id.get(to_name)
         if from_uid in adjust and to_uid and to_uid in adjust:
             adjust[from_uid] += amt
@@ -788,6 +817,7 @@ def api_settlement():
         amt = min(c_need, d_need)
         if amt > 0:
             transfers.append({
+                "from_user_id": d_uid,
                 "from_name": display_name(d_uid),
                 "to_name": display_name(c_uid),
                 "amount": amt,
@@ -809,8 +839,8 @@ def api_settlement():
         for uid, paid in participant_rows
     ]
     paid_payments = [
-        {"from_name": display_name(f_uid), "to_name": to_name, "amount": amt}
-        for f_uid, to_name, amt in payment_rows
+        {"id": pid, "from_name": display_name(f_uid), "to_name": to_name, "amount": amt}
+        for pid, f_uid, to_name, amt in payment_rows
     ]
 
     return jsonify({
@@ -824,6 +854,21 @@ def api_settlement():
         "transfers": transfers,
         "payments": paid_payments,
     })
+
+
+@app.route("/api/payment/<int:payment_id>", methods=["DELETE"])
+def api_delete_payment(payment_id):
+    user_id = get_verified_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    chat_id = request.args.get("chat_id", "")
+    count = run_query(
+        "DELETE FROM settlement_payments WHERE id = ? AND chat_id = ?",
+        (payment_id, chat_id)
+    )
+    if count == 0:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify({"ok": True})
 
 
 @app.route("/api/payment", methods=["POST"])
@@ -844,9 +889,45 @@ def api_create_payment():
     if not to_name:
         return jsonify({"error": "to_name required"}), 400
 
+    month_str = (data.get("month") or "").strip()
+    try:
+        y, m = map(int, month_str.split("-"))
+        payment_date = datetime(y, m, 1).isoformat()
+    except Exception:
+        payment_date = get_now().isoformat()
+
+    from_user_id = (data.get("from_user_id") or "").strip() or user_id
+
     save_manual_member(chat_id, to_name)
-    save_settlement_payment(chat_id, user_id, to_name, amount)
+    save_settlement_payment(chat_id, from_user_id, to_name, amount, payment_date)
     return jsonify({"ok": True})
+
+
+@app.route("/api/unsettled_check", methods=["GET"])
+def api_unsettled_check():
+    user_id = get_verified_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    chat_id = request.args.get("chat_id", "")
+    now = get_now()
+    if now.month == 1:
+        last = now.replace(year=now.year - 1, month=12, day=1)
+    else:
+        last = now.replace(month=now.month - 1, day=1)
+
+    month_str = last.strftime("%Y-%m")
+    range_spec = parse_month_param(month_str)
+
+    _, _, total_expense = get_balance_summary(chat_id, range_spec)
+    if total_expense == 0:
+        return jsonify({"unsettled": False, "month": month_str})
+
+    payments = get_payments_for_range(chat_id, range_spec)
+    if payments:
+        return jsonify({"unsettled": False, "month": month_str})
+
+    return jsonify({"unsettled": True, "month": month_str})
 
 
 @app.route("/api/register_member", methods=["POST"])

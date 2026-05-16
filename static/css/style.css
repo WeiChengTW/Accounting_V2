@@ -4,9 +4,9 @@
 /* ─── Design tokens ────────────────────────────── */
 :root {
   /* Brand */
-  --primary:       #10B981;
-  --primary-dark:  #059669;
-  --primary-light: #D1FAE5;
+  --primary:       #6366F1;
+  --primary-dark:  #4F46E5;
+  --primary-light: #EEF2FF;
   --expense:       #EF4444;
   --expense-light: #FEE2E2;
   --income:        #10B981;
@@ -186,7 +186,7 @@ h3 {
 .form-group input:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(16,185,129,.15);
+  box-shadow: 0 0 0 3px rgba(99,102,241,.15);
 }
 .form-group input::placeholder { color: var(--text-muted); opacity: 0.6; }
 
@@ -257,8 +257,8 @@ h3 {
 .btn-sm:hover { background: var(--primary-dark); }
 
 .btn-edit {
-  background: var(--primary-light);
-  color: var(--primary-dark);
+  background: #EEF2FF;
+  color: #4F46E5;
   border: none;
   border-radius: var(--radius-sm);
   padding: 8px 16px;
@@ -270,10 +270,10 @@ h3 {
   transition: background 0.15s;
   -webkit-tap-highlight-color: transparent;
 }
-.btn-edit:hover { background: #A7F3D0; }
+.btn-edit:hover { background: #E0E7FF; }
 [data-theme="dark"] .btn-edit {
-  background: rgba(16,185,129,.2);
-  color: #6EE7B7;
+  background: rgba(99,102,241,.2);
+  color: #A5B4FC;
 }
 
 .btn-delete {
@@ -295,6 +295,19 @@ h3 {
   background: rgba(239,68,68,.2);
   color: #FCA5A5;
 }
+.btn-delete-payment {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 2px 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn-delete-payment:hover { color: var(--expense); }
 
 /* ─── Month bar ────────────────────────────────── */
 .month-bar {
@@ -339,12 +352,13 @@ h3 {
 }
 .summary-item { display: flex; flex-direction: column; gap: 4px; }
 .summary-item .label {
-  font-size: 13px;
+  font-size: 17px;
   color: var(--text-muted);
   font-weight: 500;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
 }
-.summary-item .value { font-size: 20px; font-weight: 700; }
+.summary-item .value { font-size: 30px; font-weight: 700; }
 
 .paid-summary {
   margin-top: 14px;
@@ -373,8 +387,8 @@ h3 {
   align-items: center;
   margin-bottom: 8px;
 }
-.record-item { font-weight: 600; font-size: 17px; color: var(--text); }
-.record-amount { font-size: 20px; font-weight: 700; }
+.record-item { font-weight: 600; font-size: 20px; color: var(--text); }
+.record-amount { font-size: 22px; font-weight: 700; }
 .record-footer {
   display: flex;
   align-items: center;
@@ -385,7 +399,7 @@ h3 {
   display: flex;
   gap: 6px;
   align-items: center;
-  font-size: 13px;
+  font-size: 15px;
   color: var(--text-muted);
   flex-wrap: wrap;
   flex: 1;
@@ -425,32 +439,41 @@ h3 {
   border-radius: var(--radius-sm);
 }
 [data-theme="dark"] .stat-row.highlight {
-  color: #6EE7B7;
-  background: rgba(16,185,129,.2);
+  color: #A5B4FC;
+  background: rgba(99,102,241,.2);
 }
 .transfer-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 16px;
+  gap: 6px;
+  font-size: 15px;
   padding: 10px 0;
   border-bottom: 1px solid var(--border);
   color: var(--text);
+  flex-wrap: nowrap;
 }
 .transfer-row:last-child { border-bottom: none; }
-.transfer-row .arrow { color: var(--text-muted); font-size: 16px; }
-.transfer-row span:first-child, .transfer-row span:nth-child(3) { flex: 1; }
+.transfer-row .arrow { color: var(--text-muted); font-size: 14px; flex-shrink: 0; }
+.transfer-row span:first-child, .transfer-row span:nth-child(3) {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .transfer-amt {
   font-weight: 700;
   color: var(--primary-dark);
   background: var(--primary-light);
-  padding: 2px 10px;
+  padding: 2px 8px;
   border-radius: 20px;
-  font-size: 14px;
+  font-size: 13px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 [data-theme="dark"] .transfer-amt {
-  color: #6EE7B7;
-  background: rgba(16,185,129,.2);
+  color: #A5B4FC;
+  background: rgba(99,102,241,.2);
 }
 
 /* ─── Members ──────────────────────────────────── */
@@ -544,9 +567,9 @@ h3 {
   text-align: left;
 }
 .merge-option:hover { background: var(--primary-light); border-color: var(--primary); }
-[data-theme="dark"] .merge-option:hover { background: rgba(16,185,129,.15); }
+[data-theme="dark"] .merge-option:hover { background: rgba(99,102,241,.15); }
 .merge-arrow { font-size: 13px; color: var(--primary-dark); font-weight: 600; }
-[data-theme="dark"] .merge-arrow { color: #6EE7B7; }
+[data-theme="dark"] .merge-arrow { color: #A5B4FC; }
 
 /* ─── Segmented control ────────────────────────── */
 .seg-control {
@@ -625,20 +648,81 @@ h3 {
 .participant-paid    { font-weight: 600; font-size: 14px; color: var(--expense); }
 .participant-withdraw{ font-weight: 600; font-size: 14px; color: var(--income);  }
 
-/* ─── Transfer copy button ──────────────────────── */
-.btn-copy {
-  background: none;
-  border: 1px solid var(--border);
+/* ─── Repay button ───────────────────────────────── */
+.btn-repay {
+  background: #4F46E5;
+  border: none;
   border-radius: var(--radius-sm);
-  padding: 4px 10px;
-  font-size: 16px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
   cursor: pointer;
-  color: var(--text-muted);
-  transition: background 0.15s;
   flex-shrink: 0;
+  transition: opacity 0.15s;
   -webkit-tap-highlight-color: transparent;
 }
-.btn-copy:hover { background: var(--surface-2); }
+.btn-repay:active { opacity: 0.75; }
+.btn-repay.active { opacity: 0.85; }
+
+/* ─── Payment inline form ────────────────────────── */
+.payment-inline {
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  border-left: 3px solid #4F46E5;
+  padding: 10px 14px;
+  margin: 2px 0 6px;
+}
+.payment-inline-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.payment-inline-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.payment-inline-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 15px;
+  background: var(--surface);
+  color: var(--text);
+}
+.payment-inline-confirm,
+.payment-inline-cancel {
+  padding: 8px 14px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+/* ─── Bank withdraw section ─────────────────────── */
+.bank-withdraw-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.bank-withdraw-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+.bank-withdraw-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 14px;
+}
+.bank-withdraw-amt {
+  font-weight: 600;
+  color: var(--income);
+}
 
 /* ─── Member avatar ─────────────────────────────── */
 .member-avatar {
@@ -670,3 +754,34 @@ h3 {
   line-height: 1.6;
 }
 .empty-icon { font-size: 40px; margin-bottom: 12px; }
+
+/* ─── Unsettled reminder ────────────────────────── */
+.tab-badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  background: var(--expense);
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+}
+
+.unsettled-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--orange-light);
+  color: #92400E;
+  border: 1px solid #FDE68A;
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+[data-theme="dark"] .unsettled-banner {
+  background: rgba(245,158,11,.18);
+  color: #FCD34D;
+  border-color: rgba(245,158,11,.4);
+}

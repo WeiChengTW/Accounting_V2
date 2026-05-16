@@ -63,22 +63,9 @@
           <input type="month" id="settlement-month">
           <button class="btn-sm" onclick="loadSettlement()">計算</button>
         </div>
+        <div id="unsettled-banner" class="unsettled-banner" style="display:none"></div>
         <div id="settlement-result"></div>
 
-        <div class="section-divider"></div>
-        <h3>補款登記</h3>
-        <form id="payment-form">
-          <div class="form-group">
-            <label>補給誰</label>
-            <input type="text" id="payment-to" placeholder="收款人姓名">
-          </div>
-          <div class="form-group">
-            <label>金額</label>
-            <input type="number" id="payment-amount" placeholder="0" min="1">
-          </div>
-          <button type="submit" class="btn-primary btn-block">登記補款</button>
-        </form>
-        <div id="payment-msg" class="msg-area"></div>
       </div>
 
       <!-- 成員 -->
@@ -113,7 +100,8 @@
         <span class="tab-label">查詢</span>
       </button>
       <button class="tab-btn" data-tab="settlement">
-        <span class="tab-icon">
+        <span class="tab-icon" style="position:relative">
+          <span id="settlement-badge" class="tab-badge" style="display:none"></span>
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="8.01" y2="10"/><line x1="12" y1="10" x2="12.01" y2="10"/><line x1="16" y1="10" x2="16.01" y2="10"/><line x1="8" y1="14" x2="8.01" y2="14"/><line x1="12" y1="14" x2="12.01" y2="14"/><line x1="16" y1="14" x2="16.01" y2="14"/><line x1="8" y1="18" x2="12" y2="18"/><line x1="16" y1="18" x2="16.01" y2="18"/></svg>
         </span>
         <span class="tab-label">算錢</span>
