@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 app.log
 bookkeeping.db
+old_db/

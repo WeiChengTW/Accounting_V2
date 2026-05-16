@@ -169,7 +169,8 @@ h3 {
 .form-group input[type="text"],
 .form-group input[type="number"],
 .form-group input[type="date"],
-.form-group input[type="month"] {
+.form-group input[type="month"],
+.form-group select {
   width: 100%;
   padding: 13px 16px;
   border: 1.5px solid var(--border);
@@ -181,6 +182,7 @@ h3 {
   appearance: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
+.form-group select:focus,
 .form-group input:focus {
   outline: none;
   border-color: var(--primary);
@@ -373,14 +375,21 @@ h3 {
 }
 .record-item { font-weight: 600; font-size: 17px; color: var(--text); }
 .record-amount { font-size: 20px; font-weight: 700; }
+.record-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 .record-meta {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   font-size: 13px;
   color: var(--text-muted);
-  margin-bottom: 10px;
   flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
 }
 .record-type-tag {
   padding: 2px 8px;
@@ -390,7 +399,9 @@ h3 {
 }
 .record-type-tag.expense { background: var(--expense-light); color: var(--expense); }
 .record-type-tag.income  { background: var(--income-light);  color: var(--income);  }
-.record-actions { display: flex; gap: 12px; }
+.record-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.record-actions .btn-edit,
+.record-actions .btn-delete { min-height: 36px; padding: 6px 12px; font-size: 13px; }
 
 /* ─── Settlement ───────────────────────────────── */
 .stat-row {
@@ -639,6 +650,14 @@ h3 {
   font-weight: 700;
   color: #fff;
   font-size: 16px;
+  flex-shrink: 0;
+}
+
+.member-avatar-img {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  object-fit: cover;
   flex-shrink: 0;
 }
 

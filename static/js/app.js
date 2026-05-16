@@ -32,6 +32,7 @@ let ACCESS_TOKEN = "";
 let CHAT_ID = "";
 let USER_NAME = "";
 let CURRENT_RECORDS = [];
+let CURRENT_MEMBERS = [];
 
 // ─── Init ─────────────────────────────────────────────────────
 liff.init({ liffId: LIFF_ID })
@@ -62,7 +63,11 @@ liff.init({ liffId: LIFF_ID })
       const profile = await liff.getProfile();
       USER_NAME = profile.displayName || "";
       if (CHAT_ID && USER_NAME) {
-        api("POST", "/api/register_member", { chat_id: CHAT_ID, user_name: USER_NAME }).catch(() => {});
+        api("POST", "/api/register_member", {
+          chat_id: CHAT_ID,
+          user_name: USER_NAME,
+          picture_url: profile.pictureUrl || "",
+        }).catch(() => {});
       }
     } catch (_) {}
     initApp();
@@ -107,9 +112,8 @@ function setupTabs() {
 
 // ─── API helper ───────────────────────────────────────────────
 async function api(method, path, body = null, params = {}) {
-  const url = new URL(path, location.origin);
-  url.searchParams.set("chat_id", CHAT_ID);
-  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  const qs = new URLSearchParams({ chat_id: CHAT_ID, ...params });
+  const fullPath = `${path}?${qs.toString()}`;
 
   const opts = {
     method,
@@ -120,7 +124,7 @@ async function api(method, path, body = null, params = {}) {
   };
   if (body) opts.body = JSON.stringify(body);
 
-  const resp = await fetch(url, opts);
+  const resp = await fetch(fullPath, opts);
   const data = await resp.json();
   if (!resp.ok) throw new Error(data.error || "API error");
   return data;
@@ -244,6 +248,9 @@ function setupForms() {
     e.preventDefault();
     const id = document.getElementById("edit-id").value;
     const chatId = document.getElementById("edit-chat-id").value;
+    const sel = document.getElementById("edit-user-id");
+    const payerUserId = sel.value;
+    const payerName = sel.options[sel.selectedIndex]?.dataset.name || "";
     try {
       await api("PUT", `/api/record/${id}`, {
         chat_id: chatId,
@@ -251,6 +258,8 @@ function setupForms() {
         amount: document.getElementById("edit-amount").value,
         record_type: document.querySelector('input[name="edit_type"]:checked').value,
         date: document.getElementById("edit-date").value,
+        user_id: payerUserId,
+        user_name: payerName,
       });
       closeModal();
       loadRecords();
@@ -312,10 +321,12 @@ async function loadRecords() {
   listEl.innerHTML = "";
 
   try {
-    const [summaryData, recordsData] = await Promise.all([
+    const [summaryData, recordsData, membersData] = await Promise.all([
       api("GET", "/api/summary", null, { month }),
       api("GET", "/api/records", null, { month }),
+      api("GET", "/api/members"),
     ]);
+    CURRENT_MEMBERS = membersData.members || [];
 
     const balanceClass = summaryData.balance >= 0 ? "income" : "expense";
     summaryEl.innerHTML = `
@@ -339,7 +350,7 @@ async function loadRecords() {
       </div>
       ${summaryData.paid_by_user.length ? `
         <div class="paid-summary">
-          <p class="section-title">各人支出</p>
+          <p class="section-title">個人支出</p>
           ${summaryData.paid_by_user.map(u => `<div class="paid-row"><span>${escHtml(u.name)}</span><span>${fmt(u.paid)}</span></div>`).join("")}
         </div>` : ""}
     `;
@@ -364,14 +375,16 @@ async function loadRecords() {
               ${r.record_type === '支出' ? '-' : '+'}${fmt(r.amount)}
             </span>
           </div>
-          <div class="record-meta">
-            <span>${r.created_at.slice(0, 10)}</span>
-            <span>${escHtml(r.name)}</span>
-            <span class="record-type-tag ${r.record_type === '支出' ? 'expense' : 'income'}">${r.record_type}</span>
-          </div>
-          <div class="record-actions">
-            <button class="btn-edit" onclick="openEditModal(${r.id}, ${JSON.stringify(r).replace(/"/g, '&quot;')})">修改</button>
-            <button class="btn-delete" onclick="deleteRecord(${r.id})">刪除</button>
+          <div class="record-footer">
+            <div class="record-meta">
+              <span>${r.created_at.slice(0, 10)}</span>
+              <span>${escHtml(r.name)}</span>
+              <span class="record-type-tag ${r.record_type === '支出' ? 'expense' : 'income'}">${r.record_type}</span>
+            </div>
+            <div class="record-actions">
+              <button class="btn-edit" onclick="openEditModal(${r.id}, ${JSON.stringify(r).replace(/"/g, '&quot;')})">修改</button>
+              <button class="btn-delete" onclick="deleteRecord(${r.id})">刪除</button>
+            </div>
           </div>
         </div>
       `).join("")}
@@ -391,6 +404,27 @@ function openEditModal(id, record) {
   document.querySelectorAll('input[name="edit_type"]').forEach((r) => {
     r.checked = r.value === typeVal;
   });
+
+  // Populate payer dropdown
+  const sel = document.getElementById("edit-user-id");
+  sel.innerHTML = "";
+  const memberOptions = CURRENT_MEMBERS.map(m => ({
+    user_id: m.source === "manual" ? `__manual_${m.name}` : m.user_id,
+    name: m.name,
+  }));
+  // Ensure current payer is in the list (old records might not be in members)
+  if (!memberOptions.some(o => o.user_id === record.user_id)) {
+    memberOptions.unshift({ user_id: record.user_id, name: record.name });
+  }
+  memberOptions.forEach(o => {
+    const opt = document.createElement("option");
+    opt.value = o.user_id;
+    opt.dataset.name = o.name;
+    opt.textContent = o.name;
+    opt.selected = o.user_id === record.user_id;
+    sel.appendChild(opt);
+  });
+
   document.getElementById("modal").style.display = "flex";
 }
 
@@ -508,11 +542,12 @@ async function loadMembers() {
     el.innerHTML = `
       <p class="section-title">共 ${data.members.length} 人</p>
       ${data.members.map((m) => {
-        const color = avatarColor(m.name);
-        const initial = m.name.charAt(0);
+        const avatarHtml = m.picture_url
+          ? `<img class="member-avatar-img" src="${escHtml(m.picture_url)}" alt="">`
+          : `<div class="member-avatar" style="background:${avatarColor(m.name)}">${escHtml(m.name.charAt(0))}</div>`;
         return `
           <div class="member-row">
-            <div class="member-avatar" style="background:${color}">${escHtml(initial)}</div>
+            ${avatarHtml}
             <span>${escHtml(m.name)}</span>
             <span class="member-source">${m.source === "manual" ? "手動" : "群組"}</span>
             ${m.source === "manual" ? `

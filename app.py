@@ -111,10 +111,14 @@ def init_db():
                 chat_id TEXT NOT NULL,
                 user_id TEXT NOT NULL,
                 user_name TEXT NOT NULL,
+                picture_url TEXT NOT NULL DEFAULT '',
                 joined_at TEXT NOT NULL,
                 PRIMARY KEY (chat_id, user_id)
             )
         """)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(members)").fetchall()}
+        if "picture_url" not in columns:
+            conn.execute("ALTER TABLE members ADD COLUMN picture_url TEXT NOT NULL DEFAULT ''")
 
 
 # ─── DB helpers ───────────────────────────────────────────────
@@ -143,7 +147,12 @@ def get_record_by_id(chat_id, record_id):
     )
 
 
-def update_record_by_id(chat_id, record_id, item, amount, record_type, created_at):
+def update_record_by_id(chat_id, record_id, item, amount, record_type, created_at, user_id=None, user_name=None):
+    if user_id:
+        return run_query(
+            "UPDATE records SET item = ?, amount = ?, record_type = ?, created_at = ?, user_id = ?, user_name = ? WHERE chat_id = ? AND id = ?",
+            (item, amount, record_type, created_at.isoformat(), user_id, user_name or "", chat_id, record_id),
+        )
     return run_query(
         "UPDATE records SET item = ?, amount = ?, record_type = ?, created_at = ? WHERE chat_id = ? AND id = ?",
         (item, amount, record_type, created_at.isoformat(), chat_id, record_id),
@@ -188,23 +197,23 @@ def delete_manual_member(chat_id, member_name):
     )
 
 
-def upsert_member(chat_id, user_id, user_name):
+def upsert_member(chat_id, user_id, user_name, picture_url=""):
     run_query(
-        """INSERT INTO members (chat_id, user_id, user_name, joined_at)
-           VALUES (?, ?, ?, ?)
+        """INSERT INTO members (chat_id, user_id, user_name, picture_url, joined_at)
+           VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(chat_id, user_id)
-           DO UPDATE SET user_name = excluded.user_name, joined_at = excluded.joined_at""",
-        (chat_id, user_id, user_name, get_now().isoformat()),
+           DO UPDATE SET user_name = excluded.user_name, picture_url = excluded.picture_url, joined_at = excluded.joined_at""",
+        (chat_id, user_id, user_name, picture_url, get_now().isoformat()),
     )
 
 
 def get_db_members(chat_id):
     rows = run_query(
-        "SELECT user_id, user_name FROM members WHERE chat_id = ? ORDER BY joined_at ASC",
+        "SELECT user_id, user_name, picture_url FROM members WHERE chat_id = ? ORDER BY joined_at ASC",
         (chat_id,),
         fetch_mode="all",
     )
-    return [(r[0], r[1]) for r in rows]
+    return [(r[0], r[1], r[2]) for r in rows]
 
 
 def save_settlement_payment(chat_id, from_user_id, to_name, amount):
@@ -548,7 +557,7 @@ def api_get_records():
             return stored_name
         nonlocal name_cache
         if name_cache is None:
-            name_cache = {uid: name for uid, name in get_db_members(chat_id)}
+            name_cache = {uid: name for uid, name, _pic in get_db_members(chat_id)}
         return name_cache.get(user_id) or resolve_display_name(user_id, chat_id)
     records = [
         {
@@ -611,6 +620,8 @@ def api_update_record(record_id):
     _, old_item, old_amount, old_type, old_dt = existing
     item = data.get("item", old_item)
     record_type = data.get("record_type", old_type)
+    new_user_id = (data.get("user_id") or "").strip() or None
+    new_user_name = (data.get("user_name") or "").strip()
     try:
         amount = int(data.get("amount", old_amount))
         if amount <= 0:
@@ -622,7 +633,7 @@ def api_update_record(record_id):
     except (ValueError, KeyError):
         created_at = datetime.fromisoformat(old_dt)
 
-    update_record_by_id(chat_id, record_id, item, amount, record_type, created_at)
+    update_record_by_id(chat_id, record_id, item, amount, record_type, created_at, new_user_id, new_user_name)
     return jsonify({"ok": True})
 
 
@@ -652,7 +663,7 @@ def api_summary():
     prev_balance = get_previous_month_balance(chat_id, range_spec)
     balance = prev_balance + total_income - total_expense
 
-    name_cache = {uid: name for uid, name in get_db_members(chat_id)}
+    name_cache = {uid: name for uid, name, _pic in get_db_members(chat_id)}
     paid_by_user = [
         {"user_id": uid, "name": name_cache.get(uid) or resolve_display_name(uid, chat_id), "paid": paid}
         for uid, paid in paid_rows
@@ -702,12 +713,12 @@ def api_settlement():
 
     seen_ids = set()
     participant_rows = []
-    for uid, name in db_members:
+    for uid, name, _pic in db_members:
         seen_ids.add(uid)
         participant_rows.append((uid, paid_map.get(uid, 0)))
 
     # Add manual members
-    seen_names = {name for _, name in db_members}
+    seen_names = {name for _, name, _pic in db_members}
     for name in manual_members:
         fake_uid = f"__manual_{name}"
         if name not in seen_names:
@@ -732,7 +743,7 @@ def api_settlement():
         })
 
     # Build name cache from DB members so we don't need extra LINE API calls
-    name_cache = {uid: name for uid, name in db_members}
+    name_cache = {uid: name for uid, name, _pic in db_members}
     for name in manual_members:
         name_cache[f"__manual_{name}"] = name
 
@@ -846,8 +857,9 @@ def api_register_member():
     data = request.get_json()
     chat_id = data.get("chat_id", "")
     user_name = (data.get("user_name") or "").strip()
+    picture_url = (data.get("picture_url") or "").strip()
     if chat_id and user_name:
-        upsert_member(chat_id, user_id, user_name)
+        upsert_member(chat_id, user_id, user_name, picture_url)
     return jsonify({"ok": True})
 
 
@@ -862,8 +874,8 @@ def api_get_members():
     manual = get_manual_members(chat_id)
 
     return jsonify({
-        "members": [{"user_id": uid, "name": name, "source": "line"} for uid, name in db_members]
-                 + [{"user_id": f"__manual_{name}", "name": name, "source": "manual"} for name in manual]
+        "members": [{"user_id": uid, "name": name, "picture_url": pic, "source": "line"} for uid, name, pic in db_members]
+                 + [{"user_id": f"__manual_{name}", "name": name, "picture_url": "", "source": "manual"} for name in manual]
     })
 
 
