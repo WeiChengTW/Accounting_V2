@@ -6,3 +6,4 @@ __pycache__/
 app.log
 bookkeeping.db
 old_db/
+CLAUDE.md
