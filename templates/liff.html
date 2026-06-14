@@ -72,6 +72,44 @@
 
       </div>
 
+      <!-- 貸款計算 -->
+      <div class="tab-panel" id="tab-loan" style="display:none">
+        <h2>貸款計算</h2>
+
+        <div class="card loan-inputs">
+          <div class="loan-rate-row">
+            <span class="loan-rate-label">年利率</span>
+            <input type="number" id="loan-rate-input" value="2.79" step="0.01" min="0.1" max="100">
+            <span class="loan-unit">%</span>
+            <span id="rate-display" class="rate-badge">2.79%</span>
+          </div>
+          <div class="loan-rate-row loan-quota-row">
+            <span class="loan-rate-label">每月額度</span>
+            <input type="number" id="loan-repay" value="70833" min="1" readonly>
+            <span class="loan-unit">元</span>
+          </div>
+        </div>
+
+        <!-- 總覽卡片 -->
+        <div class="loan-summary-grid">
+          <div class="loan-stat">
+            <div class="loan-stat-label">累計動用</div>
+            <div class="loan-stat-value expense" id="ls-drawn">$0</div>
+          </div>
+          <div class="loan-stat">
+            <div class="loan-stat-label">累計利息</div>
+            <div class="loan-stat-value expense" id="ls-cum-interest">$0</div>
+          </div>
+          <div class="loan-stat loan-stat-full">
+            <div class="loan-stat-label">最近一期利息</div>
+            <div class="loan-stat-value" id="ls-this-interest">$0</div>
+          </div>
+        </div>
+
+        <!-- 月份明細卡片 -->
+        <div id="loan-tbody"></div>
+      </div>
+
       <!-- 成員 -->
       <div class="tab-panel" id="tab-members" style="display:none">
         <h2>群組成員</h2>
@@ -110,14 +148,20 @@
         </span>
         <span class="tab-label">算錢</span>
       </button>
+      <button class="tab-btn" data-tab="loan">
+        <span class="tab-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
+        </span>
+        <span class="tab-label">貸款</span>
+      </button>
       <button class="tab-btn" data-tab="members">
         <span class="tab-icon">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         </span>
         <span class="tab-label">成員</span>
       </button>
-      <div class="tab-bar-sep"></div>
-      <button class="theme-toggle" id="theme-toggle" aria-label="切換主題"></button>
+      <!-- <div class="tab-bar-sep"></div>
+      <button class="theme-toggle" id="theme-toggle" aria-label="切換主題"></button> -->
     </nav>
   </div><!-- end app -->
 

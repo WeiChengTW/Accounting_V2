@@ -1,73 +1,153 @@
 # Accounting V2 (記帳系統)
 
-這是一個基於 LINE Bot 與 LIFF (LINE Front-end Framework) 建立的群組記帳與分帳系統。系統允許使用者在 LINE 聊天室中呼叫記帳工具，並透過網頁介面輕鬆記錄花費、檢視收支統計以及計算結算與分帳金額。
+基於 LINE Bot + LIFF 的群組記帳與分帳系統，整合以房養老貸款追蹤。
+
+---
+
 ## 技術架構
 
-## 功能特色
+- **後端**：Python 3 + Flask，單一檔案 `app.py`
+- **資料庫**：SQLite (`bookkeeping.db`)，無 ORM，全部走 `run_query()`
+- **前端**：單頁 LIFF App，`templates/liff.html` + `static/js/app.js`
+- **LINE 整合**：Messaging API Webhook (`/callback`) + LIFF (`/liff`)
 
-- **LINE Bot 整合**：支援在群組、聊天室或個人對話中 @提及機器人來喚醒記帳功能。
-- **LIFF 網頁介面與成員頭貼**：提供直覺的 Web 介面，並支援顯示 LINE 使用者的真實頭貼，介面更清晰。
-- **收支紀錄與代墊功能**：支援記錄各項「收入」與「支出」。新增帳務時可**自由指派付款人**（幫忙代墊），不必受限於操作者本人。
-- **精準統計與結算**：自動計算本月結餘、各成員支出金額。內建智慧分帳功能能計算最少轉帳次數的還款方案，並以嚴謹的 user_id 追蹤避免名稱變更導致的帳務錯誤。
-- **自訂成員**：除了群組內已授權的 LINE 使用者外，也可以手動新增「未加入 LINE 群組的成員」進行記帳與分帳。
+---
 
-- **後端框架**：Python 3 + Flask
-- **資料庫**：SQLite (`bookkeeping.db`)
-- **LINE 整合**：`line-bot-sdk` (Messaging API & Webhook)
-- **環境變數管理**：`python-dotenv`
-
-## 安裝與執行
-
-### 1. 建立環境與安裝依賴
-
-建議使用虛擬環境 (Virtual Environment)：
+## 快速啟動
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows 環境請使用 .venv\Scripts\activate
-pip install -r requirements.txt
+bash start.sh              # Flask + ngrok 一起啟動（推薦）
+.venv/bin/python3 app.py   # 只啟動 Flask（port 5001）
+tail -f app.log            # 看即時 log
 ```
 
-### 2. 環境變數設定
-
-請在專案根目錄建立一個 `.env` 檔案，並填入以下資訊：
+環境變數放 `.env`：
 
 ```env
-CHANNEL_ACCESS_TOKEN=你的_LINE_BOT_ACCESS_TOKEN
-CHANNEL_SECRET=你的_LINE_BOT_CHANNEL_SECRET
+CHANNEL_ACCESS_TOKEN=...
+CHANNEL_SECRET=...
 ```
 
-*(請確保從 LINE Developers Console 中獲取正確的 Token 資訊)*
+`LIFF_ID` 寫死在 `app.py:34`，換 LIFF App 時要更新。
 
-### 3. 啟動服務
+---
 
-可直接使用 Python 執行，或使用提供的啟動腳本：
+## 資料庫結構
 
-```bash
-bash start.sh
-# 或
-python app.py
+| 資料表 | 用途 |
+|--------|------|
+| `records` | 收支記帳，欄位：`chat_id`, `user_id`, `user_name`, `item`, `amount`, `record_type`（收入/支出）, `created_at` |
+| `members` | LINE 用戶（每次開 LIFF 時 upsert） |
+| `manual_members` | 手動新增的非 LINE 成員，`user_id` 格式為 `__manual_<name>` |
+| `settlement_payments` | 已還款紀錄 |
+| `group_config` | 每個 chat 的設定，`(chat_id, key, value)` |
+
+### group_config 常用 key
+
+| key | 說明 | 預設 |
+|-----|------|------|
+| `balance_start_month` | 結餘計算起始月，格式 `YYYY-MM` | 前一個月 |
+| `loan_quota` | 每月銀行可動用額度（元） | 0 |
+| `loan_rate` | 以房養老年利率（%） | 2.79 |
+
+---
+
+## 以房養老邏輯（重要）
+
+### 概念
+
+本系統將「以房養老」（逆向抵押貸款信用額度）整合進分帳計算。銀行每月最多可撥 **70,833 元**（預設值，存於 group_config `loan_quota`），只對實際動用金額收利息。
+
+### 收入優先順序
+
+> **手動記的收入先用，不夠再動用銀行額度。**
+
+```
+shortfall      = max(當月支出 - 上月結餘 - 手動收入, 0)
+loan_used      = min(shortfall, loan_quota)          # 只取需要的部分
+available_bank = 上月結餘 + 手動收入 + loan_used
+bank_reimburse = min(當月支出, available_bank)       # 銀行替大家付的部分
+member_extra   = 當月支出 - bank_reimburse           # 成員需自行分攤的部分
 ```
 
-預設會運行在本機的 Flask 伺服器，若要供 LINE Webhook 呼叫，建議搭配 `ngrok` 使用：
+### 相關函式（`app.py`）
 
-```bash
-ngrok http 5000
+| 函式 | 說明 |
+|------|------|
+| `get_loan_quota(chat_id)` | 從 group_config 讀取每月額度 |
+| `get_balance_summary(chat_id, range_spec)` | 回傳 `(total_expense, manual_income, paid_rows)`，**不含**銀行額度 |
+| `get_previous_month_balance(chat_id, range_spec)` | 逐月滾算結餘，每月先用手動收入，不足才動用 loan_quota |
+| `compute_transfers(chat_id, range_spec)` | 跑完整分帳算法，回傳轉帳清單，用於判斷是否有未結算 |
+| `api_settlement()` | 算錢分頁的主要 API，同樣套用 shortfall 邏輯 |
+
+### 月結餘滾算（`get_previous_month_balance`）
+
+從 `balance_start_month` 開始逐月計算，餘額每月不會低於 0：
+
+```python
+shortfall = max(expense - balance - manual_income, 0)
+loan_used = min(shortfall, loan_quota)
+balance   = max(balance + manual_income + loan_used - expense, 0)
 ```
-然後將 `ngrok` 提供的 HTTPS 網址加上 `/callback`，填入 LINE Developers Console 的 Webhook URL 欄位。
+
+### 未結算判定
+
+`/api/unsettled_check` 跑 `compute_transfers()` 來判斷，若轉帳清單為空代表已結算（不看還款紀錄筆數）。這樣銀行完全 cover 所有費用時，成員間不需互相轉帳，也不會誤判為未結算。
+
+---
+
+## 貸款計算分頁
+
+- **起算月**：2026-06（寫死在 `static/js/app.js` `loanImportFromRecords`，`d.month >= "2026-06"`）
+- **每月額度**：預設 70,833 元（唯讀顯示，存在 group_config `loan_quota`）
+- **年利率**：存在 group_config `loan_rate`，離開輸入框時自動儲存
+- **利息計算**：`本月動用 × 年利率 / 12`（單利，只算當月動用本金）
+- **資料來源**：自動從 `records` 表匯入各月支出加總，用戶可手動覆蓋
+- **手動覆蓋保護**：`loanManualEdits` Set 記錄用戶改過的月份，重新匯入時不覆蓋
+
+### 前端相關函式（`static/js/app.js`）
+
+| 函式 | 說明 |
+|------|------|
+| `initLoanCalc()` | Tab 初始化，載入利率、同步 loan_quota，呼叫 `loanImportFromRecords(true)` |
+| `loanImportFromRecords(silent)` | 從 `/api/monthly_expenses` 拉資料，過濾 >= 2025-06，保留手動編輯月份 |
+| `renderLoanTable()` | 重繪月份卡片（本月動用、本月利息、累積利息）和頂部統計（累計動用、累計利息、最近一期利息） |
+| `calcLoan()` | 切換到貸款 Tab 時呼叫，等同 `loanImportFromRecords(false)` |
+
+### 後端 API
+
+| 路由 | 說明 |
+|------|------|
+| `GET /api/monthly_expenses?chat_id=` | 回傳所有月份支出加總 `[{month, total}]`，無年份過濾 |
+| `GET /api/config?chat_id=&key=` | 讀取 group_config 單一 key |
+| `POST /api/config` body `{chat_id, key, value}` | 寫入 group_config |
+
+---
+
+## 分帳演算法（`app.py` `api_settlement`）
+
+1. 算出銀行實際補貼（`bank_reimburse`）與成員需分攤金額（`member_extra`）
+2. 銀行補貼按各人實際付出比例退還（`allocate_proportional`）
+3. 成員分攤金額平均拆分
+4. 加總每人「應收／應付」後，以 greedy 法配對算出最少轉帳次數
+
+---
 
 ## 專案結構
 
-- `app.py`: 主要的 Flask 應用程式邏輯、API 路由與資料庫操作。
-- `requirements.txt`: 專案所需的 Python 套件清單。
-- `start.sh`: 啟動腳本。
-- `bookkeeping.db`: 系統自動生成的 SQLite 資料庫檔案。
-- `templates/`: HTML 樣板資料夾（包含 LIFF 頁面）。
-- `static/`: 靜態資源資料夾（CSS, JS 等）。
-- `ngrok.yml`: ngrok 相關設定檔。
+```
+app.py                  # Flask 主程式（所有後端邏輯、API、DB）
+templates/liff.html     # 前端單頁 App HTML
+static/js/app.js        # 前端邏輯
+static/css/style.css    # 樣式
+start.sh                # 啟動腳本（Flask + ngrok）
+bookkeeping.db          # SQLite 資料庫（自動產生）
+```
+
+---
 
 ## 注意事項
 
-- 請在 `app.py` 中將 `LIFF_ID` 替換為你在 LINE Login 頻道中所建立的 LIFF ID。
-- 請確保 Webhook 已開啟並且通過驗證。
-
+- 所有 API 都需 LINE LIFF Access Token（`Authorization: Bearer <token>`），由 `get_verified_user_id()` 驗證
+- `chat_id` 格式：`group:<id>`、`room:<id>`、`user:<id>`
+- Schema 變更用 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 在 `init_db()` 裡做，不用 migration 工具

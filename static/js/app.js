@@ -95,6 +95,7 @@ function initApp() {
   refreshPayerSelector();
   loadRecords();
   checkUnsettled();
+  initLoanCalc();
 }
 
 // ─── Tabs ─────────────────────────────────────────────────────
@@ -110,6 +111,7 @@ function setupTabs() {
       if (tab === "records") loadRecords();
       else if (tab === "settlement") loadSettlement();
       else if (tab === "members") loadMembers();
+      else if (tab === "loan") calcLoan();
     });
   });
 }
@@ -490,8 +492,10 @@ async function loadSettlement() {
         ${data.participants.map((p) => `
           <div class="participant-row">
             <span class="participant-name">${escHtml(p.name)}</span>
-            <span class="participant-paid">付：${fmt(p.paid)}</span>
-            <span class="participant-withdraw">收：${fmt(p.bank_withdraw)}</span>
+            <div class="participant-amounts">
+              <span class="participant-paid">付 ${fmt(p.paid)}</span>
+              <span class="participant-withdraw">銀行領回 ${fmt(p.bank_withdraw)}</span>
+            </div>
           </div>`).join("")}
       </div>
 
@@ -500,11 +504,15 @@ async function loadSettlement() {
           <div class="card-header card-header--orange">🔁 轉帳建議</div>
           ${data.transfers.map((t) => `
             <div class="transfer-row">
-              <span>${escHtml(t.from_name)}</span>
-              <span class="arrow">→</span>
-              <span>${escHtml(t.to_name)}</span>
-              <span class="transfer-amt">${fmt(t.amount)}</span>
-              <button class="btn-repay" data-to="${escHtml(t.to_name)}" data-to-user-id="${escHtml(t.to_user_id)}" data-amount="${t.amount}" data-from-user-id="${escHtml(t.from_user_id)}" data-from-name="${escHtml(t.from_name)}" onclick="openPaymentInline(this)">還款</button>
+              <div class="transfer-names">
+                <span class="transfer-from">${escHtml(t.from_name)}</span>
+                <span class="arrow">→</span>
+                <span class="transfer-to">${escHtml(t.to_name)}</span>
+              </div>
+              <div class="transfer-bottom">
+                <span class="transfer-amt">${fmt(t.amount)}</span>
+                <button class="btn-repay" data-to="${escHtml(t.to_name)}" data-to-user-id="${escHtml(t.to_user_id)}" data-amount="${t.amount}" data-from-user-id="${escHtml(t.from_user_id)}" data-from-name="${escHtml(t.from_name)}" onclick="openPaymentInline(this)">還款</button>
+              </div>
             </div>`).join("")}
           ${data.participants.some(p => p.bank_withdraw > 0) ? `
           <div class="bank-withdraw-section">
@@ -726,4 +734,161 @@ async function deleteMember(name) {
   } catch (err) {
     alert(`刪除失敗：${err.message}`);
   }
+}
+
+// ─── Loan Calculator ──────────────────────────────────────────
+function fmt(n) {
+  return Math.round(n).toLocaleString("zh-TW");
+}
+
+// rows: [{month:"2024-01", expense:500000}, ...]
+let loanRows = [];
+let loanManualEdits = new Set(); // months the user has manually edited
+const loanInitialDrawn = 27326;
+
+
+
+function loanGetRate() {
+  return parseFloat(document.getElementById("loan-rate-input").value) || 0;
+}
+
+function renderLoanTable() {
+  const annualRate = loanGetRate();
+  const repay = parseFloat(document.getElementById("loan-repay").value) || 0;
+  const r = annualRate / 100 / 12;
+
+  const container = document.getElementById("loan-tbody");
+  container.innerHTML = "";
+
+  let cumDrawn = loanInitialDrawn;
+  const initInterest = loanInitialDrawn * r;
+  let cumInterest = initInterest;
+  let lastInterest = initInterest;
+  // Available starts at one month's quota minus what was already drawn before June
+  let cumAvailable = repay - loanInitialDrawn;
+
+  // Show read-only initial card if there's an initial drawn amount
+  if (loanInitialDrawn > 0) {
+    const initCard = document.createElement("div");
+    initCard.className = "loan-month-card loan-initial-card";
+    initCard.innerHTML = `
+      <div class="loan-month-header loan-initial-header">2026-05 期初</div>
+      <div class="loan-month-body">
+        <div class="loan-month-row">
+          <span class="loan-month-label">本月動用</span>
+          <span class="loan-month-val muted">$${fmt(loanInitialDrawn)}</span>
+        </div>
+        <div class="loan-month-row">
+          <span class="loan-month-label">本月利息</span>
+          <span class="loan-month-val expense">$${fmt(initInterest)}</span>
+        </div>
+        <div class="loan-month-row">
+          <span class="loan-month-label">累積利息</span>
+          <span class="loan-month-val muted">$${fmt(initInterest)}</span>
+        </div>
+      </div>
+    `;
+    container.appendChild(initCard);
+  }
+
+  loanRows.forEach((row, idx) => {
+    const expense = row.expense;
+    cumDrawn += expense;
+    const interest = cumDrawn * r;
+    cumInterest += interest;
+    lastInterest = interest;
+    const displayAvailable = cumAvailable;  // show before this month's expense
+    cumAvailable = cumAvailable - expense + repay; // carry forward to next month
+
+    const card = document.createElement("div");
+    card.className = "loan-month-card";
+    card.innerHTML = `
+      <div class="loan-month-header">${row.month}</div>
+      <div class="loan-month-body">
+        <div class="loan-month-row">
+          <span class="loan-month-label">本月動用</span>
+          <input class="loan-expense-input" type="number" min="0" value="${expense}" data-idx="${idx}" placeholder="0">
+          <span class="loan-unit">元</span>
+        </div>
+        <div class="loan-month-row">
+          <span class="loan-month-label">本月利息</span>
+          <span class="loan-month-val expense">$${fmt(interest)}</span>
+        </div>
+        <div class="loan-month-row">
+          <span class="loan-month-label">累積利息</span>
+          <span class="loan-month-val muted">$${fmt(cumInterest)}</span>
+        </div>
+        <div class="loan-month-row">
+          <span class="loan-month-label">累積可動用</span>
+          <span class="loan-month-val primary">$${fmt(displayAvailable)}</span>
+        </div>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+
+  container.querySelectorAll(".loan-expense-input").forEach(inp => {
+    inp.addEventListener("input", e => {
+      const i = parseInt(e.target.dataset.idx);
+      loanRows[i].expense = parseFloat(e.target.value) || 0;
+      loanManualEdits.add(loanRows[i].month);
+      renderLoanTable();
+    });
+  });
+
+  document.getElementById("ls-drawn").textContent = "$" + fmt(cumDrawn);
+  document.getElementById("ls-cum-interest").textContent = "$" + fmt(cumInterest);
+  document.getElementById("ls-this-interest").textContent = "$" + fmt(lastInterest);
+  document.getElementById("rate-display").textContent = annualRate.toFixed(2) + "%";
+}
+
+let _loanRateSaveTimer = null;
+
+async function initLoanCalc() {
+  const rateInput = document.getElementById("loan-rate-input");
+  const repayInput = document.getElementById("loan-repay");
+  // Load saved configs from DB
+  try {
+    const cfg = await api("GET", "/api/config", null, { chat_id: CHAT_ID, key: "loan_rate" });
+    if (cfg && cfg.value !== null) rateInput.value = cfg.value;
+  } catch (e) {}
+  try {
+    await api("POST", "/api/config", { chat_id: CHAT_ID, key: "loan_quota", value: repayInput.value });
+  } catch (e) {}
+
+  rateInput.addEventListener("input", () => {
+    renderLoanTable();
+    clearTimeout(_loanRateSaveTimer);
+    _loanRateSaveTimer = setTimeout(() => {
+      api("POST", "/api/config", { chat_id: CHAT_ID, key: "loan_rate", value: rateInput.value });
+    }, 800);
+  });
+
+  loanRows = [];
+  renderLoanTable();
+  loanImportFromRecords(true);
+}
+
+async function loanImportFromRecords(silent = false) {
+  try {
+    const data = await api("GET", "/api/monthly_expenses", null, { chat_id: CHAT_ID });
+    if (!data || data.length === 0) {
+      if (!silent) showToast("本年度尚無支出記錄");
+      return;
+    }
+    const filtered = data.filter(d => d.month >= "2026-06");
+    const existing = Object.fromEntries(loanRows.map(r => [r.month, r.expense]));
+    loanRows = filtered.map(d => ({
+      month: d.month,
+      expense: loanManualEdits.has(d.month) ? existing[d.month] : d.total
+    }));
+    renderLoanTable();
+    if (!silent) showToast(`已匯入 ${filtered.length} 個月份`);
+  } catch (e) {
+    if (!silent) showToast("匯入失敗", true);
+  }
+}
+
+async function calcLoan() {
+  await loanImportFromRecords(false);
 }

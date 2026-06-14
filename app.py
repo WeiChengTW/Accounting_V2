@@ -362,6 +362,14 @@ def get_verified_user_id():
 
 # ─── Calculation helpers ──────────────────────────────────────
 
+def get_loan_quota(chat_id):
+    row = run_query(
+        "SELECT value FROM group_config WHERE chat_id=? AND key='loan_quota'",
+        [chat_id], fetch_mode="one"
+    )
+    return int(row[0]) if row else 0
+
+
 def get_balance_summary(chat_id, range_spec):
     start, end = range_start_end(range_spec)
     where = "chat_id = ? AND created_at >= ? AND created_at < ?"
@@ -401,6 +409,7 @@ def get_previous_month_balance(chat_id, range_spec):
         return 0
 
     # Iterate month by month, balance floors at 0 each month
+    loan_quota = get_loan_quota(chat_id)
     balance = 0
     ptr = range_start
     while ptr < curr_start:
@@ -409,7 +418,7 @@ def get_previous_month_balance(chat_id, range_spec):
         else:
             next_ptr = datetime(ptr.year, ptr.month + 1, 1)
         params = [chat_id, ptr.isoformat(), next_ptr.isoformat()]
-        income = run_query(
+        manual_income = run_query(
             "SELECT COALESCE(SUM(amount), 0) FROM records WHERE chat_id=? AND created_at>=? AND created_at<? AND record_type='收入'",
             params, fetch_mode="one"
         )[0]
@@ -417,7 +426,9 @@ def get_previous_month_balance(chat_id, range_spec):
             "SELECT COALESCE(SUM(amount), 0) FROM records WHERE chat_id=? AND created_at>=? AND created_at<? AND record_type='支出'",
             params, fetch_mode="one"
         )[0]
-        balance = max(balance + income - expense, 0)
+        shortfall = max(expense - balance - manual_income, 0)
+        loan_used = min(shortfall, loan_quota)
+        balance = max(balance + manual_income + loan_used - expense, 0)
         ptr = next_ptr
     return balance
 
@@ -461,6 +472,93 @@ def allocate_proportional(total, ids, weight_map):
         allocs[uid] += 1
         remaining -= 1
     return allocs
+
+
+def compute_transfers(chat_id, range_spec):
+    """Return list of required transfers for the given month, or [] if nothing owed."""
+    paid_by_user_rows = get_expense_by_user(chat_id, range_spec)
+    paid_map = {uid: paid for uid, paid in paid_by_user_rows}
+    total_expense = sum(paid_map.values())
+    if total_expense == 0:
+        return []
+
+    _, manual_income, _ = get_balance_summary(chat_id, range_spec)
+    prev_balance = get_previous_month_balance(chat_id, range_spec)
+    shortfall = max(total_expense - prev_balance - manual_income, 0)
+    loan_used = min(shortfall, get_loan_quota(chat_id))
+    available_bank = max(prev_balance + manual_income + loan_used, 0)
+    bank_reimburse = min(total_expense, available_bank)
+    member_extra = total_expense - bank_reimburse
+
+    db_members = get_db_members(chat_id)
+    manual_members = get_manual_members(chat_id)
+    name_cache = {uid: name for uid, name, _pic in db_members}
+    for name in manual_members:
+        name_cache[f"__manual_{name}"] = name
+
+    seen_ids, participant_rows = set(), []
+    for uid, name, _pic in db_members:
+        seen_ids.add(uid)
+        participant_rows.append((uid, paid_map.get(uid, 0)))
+    seen_names = {name for _, name, _pic in db_members}
+    for name in manual_members:
+        fake_uid = f"__manual_{name}"
+        if name not in seen_names:
+            seen_ids.add(fake_uid)
+            seen_names.add(name)
+            participant_rows.append((fake_uid, paid_map.get(fake_uid, 0)))
+    for uid in paid_map:
+        if uid and uid not in seen_ids:
+            participant_rows.append((uid, paid_map.get(uid, 0)))
+            seen_ids.add(uid)
+
+    if not participant_rows:
+        return []
+
+    all_ids = [uid for uid, _ in participant_rows]
+    bank_map = allocate_proportional(bank_reimburse, all_ids, {uid: paid_map.get(uid, 0) for uid in all_ids})
+    count = len(participant_rows)
+    base_share = member_extra // count
+    share_rem = member_extra % count
+    target_share = {uid: base_share + (1 if i < share_rem else 0) for i, (uid, _) in enumerate(participant_rows)}
+
+    payment_rows = get_payments_for_range(chat_id, range_spec)
+
+    def display_name(uid):
+        return name_cache.get(uid) or uid
+
+    name_to_id = {display_name(uid).strip(): uid for uid, _ in participant_rows}
+    adjust = {uid: 0 for uid in all_ids}
+    for _pid, from_uid, to_uid_stored, to_name, amt in payment_rows:
+        to_uid = to_uid_stored if to_uid_stored else name_to_id.get(to_name)
+        if from_uid in adjust and to_uid and to_uid in adjust:
+            adjust[from_uid] += amt
+            adjust[to_uid] -= amt
+
+    creditors, debtors = [], []
+    for uid, paid in participant_rows:
+        after_bank = paid_map.get(uid, 0) - bank_map.get(uid, 0)
+        delta = after_bank - target_share[uid] + adjust.get(uid, 0)
+        if delta > 0:
+            creditors.append([uid, delta])
+        elif delta < 0:
+            debtors.append([uid, -delta])
+
+    transfers, ci, di = [], 0, 0
+    while ci < len(creditors) and di < len(debtors):
+        c_uid, c_need = creditors[ci]
+        d_uid, d_need = debtors[di]
+        amt = min(c_need, d_need)
+        if amt > 0:
+            transfers.append({"from": d_uid, "to": c_uid, "amount": amt})
+        creditors[ci][1] -= amt
+        debtors[di][1] -= amt
+        if creditors[ci][1] == 0:
+            ci += 1
+        if debtors[di][1] == 0:
+            di += 1
+
+    return transfers
 
 
 # ─── Webhook ──────────────────────────────────────────────────
@@ -713,6 +811,62 @@ def api_summary():
     })
 
 
+@app.route("/api/config", methods=["GET"])
+def api_config_get():
+    user_id = get_verified_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    chat_id = request.args.get("chat_id", "")
+    key = request.args.get("key", "")
+    if not chat_id or not key:
+        return jsonify({"error": "missing params"}), 400
+    row = run_query(
+        "SELECT value FROM group_config WHERE chat_id=? AND key=?",
+        [chat_id, key], fetch_mode="one"
+    )
+    return jsonify({"value": row[0] if row else None})
+
+
+@app.route("/api/config", methods=["POST"])
+def api_config_set():
+    user_id = get_verified_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    data = request.get_json()
+    chat_id = data.get("chat_id", "")
+    key = data.get("key", "")
+    value = data.get("value", "")
+    if not chat_id or not key:
+        return jsonify({"error": "missing params"}), 400
+    run_query(
+        "INSERT OR REPLACE INTO group_config (chat_id, key, value) VALUES (?, ?, ?)",
+        [chat_id, key, str(value)]
+    )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/monthly_expenses", methods=["GET"])
+def api_monthly_expenses():
+    user_id = get_verified_user_id()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    chat_id = request.args.get("chat_id", "")
+    if not chat_id:
+        return jsonify({"error": "missing params"}), 400
+
+    rows = run_query(
+        """SELECT substr(created_at, 1, 7) as month,
+                  SUM(amount) as total
+           FROM records
+           WHERE chat_id = ? AND record_type = '支出'
+           GROUP BY month
+           ORDER BY month""",
+        (chat_id,), fetch_mode="all"
+    )
+    return jsonify([{"month": r[0], "total": r[1]} for r in rows])
+
+
 @app.route("/api/settlement", methods=["GET"])
 def api_settlement():
     user_id = get_verified_user_id()
@@ -736,9 +890,12 @@ def api_settlement():
             "message": "該月份尚無支出紀錄",
         })
 
-    _, total_income, _ = get_balance_summary(chat_id, range_spec)
+    _, manual_income, _ = get_balance_summary(chat_id, range_spec)
+    total_income = manual_income
     prev_balance = get_previous_month_balance(chat_id, range_spec)
-    available_bank = max(prev_balance + total_income, 0)
+    shortfall = max(total_expense - prev_balance - manual_income, 0)
+    loan_used = min(shortfall, get_loan_quota(chat_id))
+    available_bank = max(prev_balance + manual_income + loan_used, 0)
     bank_reimburse = min(total_expense, available_bank)
     member_extra = total_expense - bank_reimburse
 
@@ -927,15 +1084,9 @@ def api_unsettled_check():
     month_str = last.strftime("%Y-%m")
     range_spec = parse_month_param(month_str)
 
-    total_expense, _, _ = get_balance_summary(chat_id, range_spec)
-    if total_expense == 0:
-        return jsonify({"unsettled": False, "month": month_str})
-
-    payments = get_payments_for_range(chat_id, range_spec)
-    if payments:
-        return jsonify({"unsettled": False, "month": month_str})
-
-    return jsonify({"unsettled": True, "month": month_str})
+    transfers = compute_transfers(chat_id, range_spec)
+    unsettled = len(transfers) > 0
+    return jsonify({"unsettled": unsettled, "month": month_str})
 
 
 @app.route("/api/register_member", methods=["POST"])

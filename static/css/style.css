@@ -442,33 +442,38 @@ h3 {
   color: #A5B4FC;
   background: rgba(99,102,241,.2);
 }
+/* 轉帳建議 — 兩行 */
 .transfer-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.transfer-row:last-child { border-bottom: none; }
+.transfer-names {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 15px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
+  font-size: 16px;
+  font-weight: 500;
   color: var(--text);
-  flex-wrap: nowrap;
 }
-.transfer-row:last-child { border-bottom: none; }
-.transfer-row .arrow { color: var(--text-muted); font-size: 14px; flex-shrink: 0; }
-.transfer-row span:first-child, .transfer-row span:nth-child(3) {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.transfer-from, .transfer-to { flex: 1; }
+.transfer-names .arrow { color: var(--text-muted); flex-shrink: 0; }
+.transfer-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .transfer-amt {
   font-weight: 700;
   color: var(--primary-dark);
   background: var(--primary-light);
-  padding: 2px 8px;
+  padding: 3px 12px;
   border-radius: 20px;
-  font-size: 13px;
-  flex-shrink: 0;
+  font-size: 14px;
   white-space: nowrap;
 }
 [data-theme="dark"] .transfer-amt {
@@ -633,20 +638,19 @@ h3 {
 .card-header--green  { background: var(--primary-dark); }
 .card-header--orange { background: var(--orange); }
 
-/* ─── Settlement participant row ────────────────── */
+/* 每人分攤 — 兩行 */
 .participant-row {
   display: flex;
-  align-items: center;
-  font-size: 16px;
-  padding: 9px 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0;
   border-bottom: 1px solid var(--border);
-  gap: 8px;
-  color: var(--text);
 }
 .participant-row:last-child { border-bottom: none; }
-.participant-name    { flex: 1; }
-.participant-paid    { font-weight: 600; font-size: 14px; color: var(--expense); }
-.participant-withdraw{ font-weight: 600; font-size: 14px; color: var(--income);  }
+.participant-name    { font-size: 16px; font-weight: 500; color: var(--text); }
+.participant-amounts { display: flex; gap: 16px; }
+.participant-paid    { font-size: 14px; font-weight: 600; color: var(--expense); }
+.participant-withdraw{ font-size: 14px; font-weight: 600; color: var(--income);  }
 
 /* ─── Repay button ───────────────────────────────── */
 .btn-repay {
@@ -785,3 +789,149 @@ h3 {
   color: #FCD34D;
   border-color: rgba(245,158,11,.4);
 }
+
+/* ─── Loan Calculator ───────────────────────────── */
+
+.rate-badge {
+  display: inline-block;
+  background: var(--primary-light);
+  color: var(--primary-dark);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  margin-left: 6px;
+}
+[data-theme="dark"] .rate-badge {
+  background: rgba(99,102,241,.25);
+  color: #A5B4FC;
+}
+
+/* ── 貸款 inputs ── */
+.loan-inputs { padding: 16px 16px 8px; }
+.loan-rate-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.loan-rate-label {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  min-width: 64px;
+}
+.loan-rate-row input {
+  width: 110px;
+  font-size: 20px;
+  font-weight: 700;
+  padding: 8px 12px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-align: right;
+  background: var(--surface);
+  color: var(--text);
+}
+.loan-rate-row input[readonly] {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  cursor: default;
+}
+.loan-unit {
+  font-size: 17px;
+  color: var(--text-muted);
+}
+.rate-badge {
+  display: inline-block;
+  background: var(--primary-light);
+  color: var(--primary-dark);
+  font-size: 15px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+
+/* ── 總覽卡片 ── */
+.loan-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.loan-stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 12px;
+  text-align: center;
+}
+.loan-stat-full {
+  grid-column: 1 / -1;
+}
+.loan-stat-label {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.loan-stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+}
+.loan-stat-value.primary { color: var(--primary); }
+.loan-stat-value.expense { color: var(--expense); }
+
+/* ── 月份明細卡片 ── */
+.loan-month-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.loan-month-header {
+  background: var(--primary);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  padding: 10px 16px;
+  letter-spacing: 1px;
+}
+.loan-initial-card { opacity: 0.75; }
+.loan-initial-header { background: var(--text-muted); }
+.loan-month-body { padding: 10px 16px; }
+.loan-month-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.loan-month-row:last-child { border-bottom: none; }
+.loan-month-label {
+  font-size: 16px;
+  color: var(--text-muted);
+  min-width: 80px;
+}
+.loan-month-val {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+}
+.loan-month-val.expense { color: var(--expense); }
+.loan-month-val.muted   { color: var(--text-muted); font-weight: 600; }
+.loan-month-val.primary { color: var(--primary); }
+
+.loan-expense-input {
+  width: 140px;
+  font-size: 20px;
+  font-weight: 700;
+  padding: 6px 10px;
+  border: 2px solid var(--primary);
+  border-radius: var(--radius-sm);
+  text-align: right;
+  background: var(--surface);
+  color: var(--text);
+}
+
